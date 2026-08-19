@@ -14,6 +14,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const token = authHeader.replace(/^Bearer\s+/i, "");
 
   if (!token) {
+    const baseUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : "https://kvant-mcp.vercel.app";
+    res.setHeader("WWW-Authenticate", `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`);
     res.status(401).json({ error: "Missing Authorization header. Provide your Kvant API Bearer token." });
     return;
   }
