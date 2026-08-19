@@ -32,26 +32,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   <title>Kvant — Подключение к Claude</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0c0c0c; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .card { background: #1a1a1a; border-radius: 16px; padding: 40px; max-width: 440px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.3); border: 1px solid #2a2a2a; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f7; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .card { background: #fff; border-radius: 16px; padding: 40px; max-width: 440px; width: 100%; box-shadow: 0 2px 16px rgba(0,0,0,0.06); border: 1px solid #e8e8e8; }
     .logo { display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
     .logo img { height: 32px; }
-    h1 { font-size: 20px; margin-bottom: 8px; color: #fff; text-align: center; }
-    p { font-size: 14px; color: #989898; margin-bottom: 24px; line-height: 1.5; text-align: center; }
-    label { font-size: 13px; font-weight: 500; color: #b8b8b8; display: block; margin-bottom: 6px; }
-    input[type="password"] { width: 100%; padding: 12px 14px; border: 1px solid #424242; border-radius: 10px; font-size: 14px; font-family: monospace; background: #111; color: #fff; }
-    input[type="password"]:focus { outline: none; border-color: #4c3898; box-shadow: 0 0 0 3px rgba(76,56,152,0.25); }
+    h1 { font-size: 20px; margin-bottom: 8px; color: #1a1a1a; text-align: center; }
+    p { font-size: 14px; color: #666; margin-bottom: 24px; line-height: 1.5; text-align: center; }
+    label { font-size: 13px; font-weight: 500; color: #333; display: block; margin-bottom: 6px; }
+    input[type="password"] { width: 100%; padding: 12px 14px; border: 1px solid #ddd; border-radius: 10px; font-size: 14px; font-family: monospace; background: #fafafa; color: #1a1a1a; }
+    input[type="password"]:focus { outline: none; border-color: #4c3898; box-shadow: 0 0 0 3px rgba(76,56,152,0.12); }
     button { width: 100%; padding: 12px; background: #4c3898; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 500; cursor: pointer; margin-top: 20px; transition: background 0.15s; }
     button:hover { background: #3d2987; }
-    .hint { font-size: 12px; color: #666; margin-top: 12px; text-align: center; }
+    .hint { font-size: 12px; color: #999; margin-top: 12px; text-align: center; }
   </style>
   <link rel="icon" href="https://static.tildacdn.com/tild6235-6161-4633-a232-313130396562/32x32.ico">
 </head>
 <body>
   <div class="card">
     <div class="logo"><img src="https://static.tildacdn.com/tild3866-3831-4362-b433-633339643533/logo_kvant.svg" alt="Квант"></div>
-    <h1>Подключение к Claude</h1>
-    <p>Вставьте ваш API-ключ из настроек профиля Квант.<br>Он будет использоваться для доступа Claude к вашим коммуникациям.</p>
+    <h1>Авторизация</h1>
+    <p>Вставьте ваш API-ключ из настроек профиля Квант для подключения.</p>
     <form method="POST" action="">
       <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}">
       <input type="hidden" name="state" value="${escapeHtml(state || "")}">
