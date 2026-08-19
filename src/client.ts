@@ -9,7 +9,7 @@ export function runWithToken<T>(token: string, fn: () => T): T {
 }
 
 function getToken(): string {
-  const token = tokenStorage.getStore();
+  const token = tokenStorage.getStore()?.trim();
   if (!token) {
     throw new Error(
       "No Kvant API token found. Pass your Bearer token in the Authorization header of the MCP request."
@@ -40,15 +40,17 @@ export async function kvantRequest<T = unknown>(
   }
 
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${getToken()}`,
-    "Content-Type": "application/json",
+    "api-key": getToken(),
     Accept: "application/json",
   };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
 
   const res = await fetch(url.toString(), {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
   if (!res.ok) {

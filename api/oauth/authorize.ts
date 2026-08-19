@@ -7,6 +7,14 @@ function getSecret() {
   return new TextEncoder().encode(secret);
 }
 
+interface ConsentFields {
+  redirectUri: string;
+  state: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  clientId: string;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const {
     redirect_uri,
@@ -24,7 +32,91 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(`<!DOCTYPE html>
+    res.send(
+      renderConsentPage({
+        redirectUri: redirect_uri,
+        state: state || "",
+        codeChallenge: code_challenge,
+        codeChallengeMethod: code_challenge_method || "S256",
+        clientId: client_id || "",
+      })
+    );
+    return;
+  }
+
+  if (req.method === "POST") {
+    const body = req.body || {};
+    const apiKey = String(body.api_key || "").trim();
+    const fields: ConsentFields = {
+      redirectUri: body.redirect_uri || "",
+      state: body.state || "",
+      codeChallenge: body.code_challenge || "",
+      codeChallengeMethod: body.code_challenge_method || "S256",
+      clientId: body.client_id || "",
+    };
+
+    if (!apiKey || !fields.redirectUri || !fields.codeChallenge) {
+      res.status(400).json({ error: "Missing required fields" });
+      return;
+    }
+
+    const probeError = await validateKvantApiKey(apiKey);
+    if (probeError) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(renderConsentPage(fields, probeError));
+      return;
+    }
+
+    const code = await new SignJWT({
+      kvant_key: apiKey,
+      code_challenge: fields.codeChallenge,
+      code_challenge_method: fields.codeChallengeMethod,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(getSecret());
+
+    const url = new URL(fields.redirectUri);
+    url.searchParams.set("code", code);
+    if (fields.state) url.searchParams.set("state", fields.state);
+
+    res.redirect(302, url.toString());
+    return;
+  }
+
+  res.status(405).json({ error: "Method not allowed" });
+}
+
+async function validateKvantApiKey(apiKey: string): Promise<string | null> {
+  try {
+    const probe = await fetch("https://platform.kvant.app/openapi/users", {
+      headers: {
+        "api-key": apiKey,
+        Accept: "application/json",
+      },
+    });
+
+    if (probe.ok) return null;
+
+    try {
+      const errBody = (await probe.json()) as { message?: string };
+      if (errBody?.message) return String(errBody.message);
+    } catch {
+      // fall through to default
+    }
+    return "Ключ не принят API Квант.";
+  } catch {
+    return "Не удалось проверить ключ. Попробуйте ещё раз.";
+  }
+}
+
+function renderConsentPage(fields: ConsentFields, error?: string): string {
+  const errorHtml = error
+    ? `<div class="error">${escapeHtml(error)}</div>`
+    : "";
+
+  return `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
@@ -44,6 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     button { width: 100%; padding: 12px; background: #4c3898; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 500; cursor: pointer; margin-top: 20px; transition: background 0.15s; }
     button:hover { background: #3d2987; }
     .hint { font-size: 12px; color: #999; margin-top: 12px; text-align: center; }
+    .error { background: #fef2f2; color: #b91c1c; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; line-height: 1.4; }
   </style>
   <link rel="icon" href="https://static.tildacdn.com/tild6235-6161-4633-a232-313130396562/32x32.ico">
 </head>
@@ -53,11 +146,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     <h1>Авторизация</h1>
     <p>Вставьте ваш API-ключ из настроек профиля Квант для подключения.</p>
     <form method="POST" action="">
-      <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}">
-      <input type="hidden" name="state" value="${escapeHtml(state || "")}">
-      <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
-      <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method || "S256")}">
-      <input type="hidden" name="client_id" value="${escapeHtml(client_id || "")}">
+      <input type="hidden" name="redirect_uri" value="${escapeHtml(fields.redirectUri)}">
+      <input type="hidden" name="state" value="${escapeHtml(fields.state)}">
+      <input type="hidden" name="code_challenge" value="${escapeHtml(fields.codeChallenge)}">
+      <input type="hidden" name="code_challenge_method" value="${escapeHtml(fields.codeChallengeMethod)}">
+      <input type="hidden" name="client_id" value="${escapeHtml(fields.clientId)}">
+      ${errorHtml}
       <label for="api_key">API-ключ Kvant</label>
       <input type="password" id="api_key" name="api_key" placeholder="Вставьте ключ сюда" required autocomplete="off">
       <button type="submit">Подключить</button>
@@ -65,42 +159,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     </form>
   </div>
 </body>
-</html>`);
-    return;
-  }
-
-  if (req.method === "POST") {
-    const body = req.body || {};
-    const apiKey = body.api_key;
-    const redirectUri = body.redirect_uri;
-    const postState = body.state;
-    const codeChallenge = body.code_challenge;
-    const codeChallengeMethod = body.code_challenge_method || "S256";
-
-    if (!apiKey || !redirectUri || !codeChallenge) {
-      res.status(400).json({ error: "Missing required fields" });
-      return;
-    }
-
-    const code = await new SignJWT({
-      kvant_key: apiKey,
-      code_challenge: codeChallenge,
-      code_challenge_method: codeChallengeMethod,
-    })
-      .setProtectedHeader({ alg: "HS256" })
-      .setIssuedAt()
-      .setExpirationTime("5m")
-      .sign(getSecret());
-
-    const url = new URL(redirectUri);
-    url.searchParams.set("code", code);
-    if (postState) url.searchParams.set("state", postState);
-
-    res.redirect(302, url.toString());
-    return;
-  }
-
-  res.status(405).json({ error: "Method not allowed" });
+</html>`;
 }
 
 function escapeHtml(str: string): string {
