@@ -1,30 +1,35 @@
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { createServer } from "../src/index.js";
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { registerTasksTools } from "../src/tools/tasks.js";
+import { registerProjectsTools } from "../src/tools/projects.js";
+import { registerProjectTemplatesTools } from "../src/tools/project-templates.js";
+import { registerUsersTools } from "../src/tools/users.js";
+import { registerBusinessProcessesTools } from "../src/tools/business-processes.js";
+import { registerReportsTools } from "../src/tools/reports.js";
 import { runWithToken } from "../src/client.js";
 
-export default async function handler(req: Request): Promise<Response> {
-  const authHeader = req.headers.get("authorization") || "";
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const authHeader = (req.headers.authorization as string) || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
 
   if (!token) {
-    return new Response(
-      JSON.stringify({ error: "Missing Authorization header. Provide your Kvant API Bearer token." }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
-    );
+    res.status(401).json({ error: "Missing Authorization header. Provide your Kvant API Bearer token." });
+    return;
   }
 
-  return runWithToken(token, async () => {
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
+  await runWithToken(token, async () => {
+    const server = new McpServer({ name: "Kvant", version: "1.0.0" });
 
-    const server = createServer();
+    registerTasksTools(server);
+    registerProjectsTools(server);
+    registerProjectTemplatesTools(server);
+    registerUsersTools(server);
+    registerBusinessProcessesTools(server);
+    registerReportsTools(server);
+
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
-
-    return transport.handleRequest(req);
+    await transport.handleRequest(req, res);
   });
 }
-
-export const config = {
-  runtime: "edge",
-};

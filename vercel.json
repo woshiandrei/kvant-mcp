@@ -1,7 +1,15 @@
 {
+  "framework": null,
+  "installCommand": "npm install",
+  "buildCommand": "",
+  "outputDirectory": "",
   "functions": {
     "api/mcp.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "runtime": "@vercel/node@latest"
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/mcp", "destination": "/api/mcp" }
+  ]
 }
