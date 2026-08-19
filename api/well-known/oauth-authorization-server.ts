@@ -17,5 +17,7 @@ export default function handler(_req: VercelRequest, res: VercelResponse) {
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
     scopes_supported: [],
+    service_documentation: "https://kvant.app",
+    op_policy_uri: "https://kvant.app",
   });
 }

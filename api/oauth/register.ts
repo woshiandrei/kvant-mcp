@@ -17,5 +17,6 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
+    logo_uri: "https://static.tildacdn.com/tild3363-3263-4630-a362-613830636135/152x152.png",
   });
 }
