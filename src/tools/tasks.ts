@@ -33,7 +33,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_create",
-    "Create a new communication",
+    "Create a new communication. Types: task (name, description, expected result, evidence), appeal (request text), decision (situation, data, proposed solution), meeting (participants, organizer, place, date/time). It appears as Incoming to the performer (or Scheduled if a future send date is provided).",
     { data: z.record(z.unknown()).describe("Task creation payload") },
     async ({ data }) => {
       const result = await kvantRequest({ method: "POST", path: "/tasks/store", body: data });
@@ -66,7 +66,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_cancel",
-    "Reject or return a closed communication for revision",
+    "Reject a completed communication and return it to the performer for revision (sender action, moves from Approve stage back to performer).",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/cancel` });
@@ -76,7 +76,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_accept",
-    "Accept/approve a communication",
+    "Accept an incoming communication (Incoming -> Accepted) or approve a completed one (Approve -> Completed). The action depends on the current stage.",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/accept` });
@@ -96,7 +96,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_done",
-    "Mark a communication as done",
+    "Close the communication as performer (moves it to the Approve stage for the sender to review). This is NOT the final completed state.",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/done` });
@@ -106,7 +106,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_take_back",
-    "Recall a communication",
+    "Withdraw/revoke a communication (sender action). The sender takes back a communication they previously sent.",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/take_back` });
@@ -146,13 +146,13 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_move_action",
-    "Move a communication action",
+    "Reschedule the calendar slot (date/time) for a communication in progress.",
     {
       task_id: z.number().describe("Task ID"),
       data: z.record(z.unknown()).optional().describe("Action move payload"),
     },
     async ({ task_id, data }) => {
-      const result = await kvantRequest({ method: "POST", path: `/${task_id}/actions`, body: data });
+      const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/actions`, body: data });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
