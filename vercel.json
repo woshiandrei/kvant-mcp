@@ -5,8 +5,7 @@
   "outputDirectory": "",
   "functions": {
     "api/mcp.ts": {
-      "maxDuration": 60,
-      "runtime": "@vercel/node@latest"
+      "maxDuration": 60
     }
   },
   "rewrites": [
