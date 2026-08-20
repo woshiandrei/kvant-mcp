@@ -16,14 +16,14 @@ const TASK_RESPONSE_GUIDE =
   "List request type (my/control/track) is the list tab, not type_id. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
   "function_user_id=org function/role the performer is acting in — same user can have several functions. " +
-  "due_at=deadline (null if none). required_deadline=1 is a hard deadline: you cannot set due_at later than the existing due_at. If that due_at is already past, do not take into work or reschedule — close immediately with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). required_deadline=0/null can be postponed. The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
+  "due_at=deadline (null if none). required_deadline=0 or null is an ordinary deadline: the performer may postpone it with kvant_tasks_move_action (In Progress) by sending a new due_at. required_deadline=1 is the exception — a hard deadline that cannot be set later than the existing due_at; if that due_at is already past, do not take into work or reschedule, close with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
   "time_to_accomplish=planned minutes (default often 30); time_to_accomplish_fact=actual minutes when done (null until then). " +
   "not_need_approve=1 skips the Approve stage; null/0 = sender must approve. " +
   "repeat_task_id set when spawned from a recurring template. " +
   "proof is an object when evidence is required (else null): type 1=text (min_requirement=min chars); screenshot/image seen as type 2; other kinds include link, photo, file (remaining numeric map unknown). check_description=verification criteria. " +
   "task_actions are calendar slots (meetings: date, end_date, include_to_calendar); empty when unused. " +
   "relation_track_users.type 1=sender (creator), not the performer; type 2=additional participant/observer. user_type unknown. " +
-  "Dates: created_at/updated_at/deleted_at, task_start_date, first_created_at (often UTC without offset), took_to_work_at, last_done_at. " +
+  "Dates in responses often look like 2026-08-24 12:00:00+03. When writing date/end_date/due_at to to_work or move_action, send YYYY-MM-DD HH:mm:ss with no T and no timezone (2026-08-24 12:00:00). The calendar slot (date and end_date) cannot be later than due_at — if the user names one time for both the action and the deadline, set end_date and due_at to that time (do not add 30 minutes after the deadline). " +
   "Flags 0/1: is_canceled, is_active. is_done answers whether the expected result (communication_result) was achieved: 1=yes, 0=closed without achieving it (closing is still allowed). " +
   "program_id=project; business_process and business_process_action_queue_id link a process; mass_task_id=bulk-created group. " +
   "UI sort only: position, position_control, section_position_id. " +
@@ -32,6 +32,124 @@ const TASK_RESPONSE_GUIDE =
 
 const UNSPECIFIED_PAYLOAD =
   "API body field names are not yet specified. Pass the OpenAPI/Make JSON as-is. Do not invent names from the list/get response (store/update payloads are form fields, not inputs_values).";
+
+const KVANT_WALL_TIME =
+  'Format: YYYY-MM-DD HH:mm:ss with no T and no timezone, e.g. "2026-08-24 12:00:00". Do not send +03, +03:00, or ISO 8601.';
+
+const DEFAULT_SLOT_TITLE = "Выполнить действие";
+
+type CalendarSlotArgs = {
+  task_id: number;
+  title?: string;
+  include_to_calendar?: number;
+  date?: string;
+  end_date?: string | null;
+  due_at?: string;
+  data?: Record<string, unknown>;
+};
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asNullableString(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "string") return value;
+  return undefined;
+}
+
+function toKvantDatetime(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?/);
+  if (!match) return trimmed;
+  return `${match[1]} ${match[2]}:${match[3] ?? "00"}`;
+}
+
+function resolveCalendarSlotBody(args: CalendarSlotArgs): {
+  title: string;
+  include_to_calendar: number;
+  date: string;
+  end_date: string | null;
+  due_at: string;
+} {
+  const nested = args.data && typeof args.data === "object" ? args.data : {};
+  const titleRaw = args.title ?? asString(nested.title);
+  const includeRaw = args.include_to_calendar ?? asFiniteNumber(nested.include_to_calendar);
+  const dateRaw = args.date ?? asString(nested.date);
+  const endRaw =
+    args.end_date !== undefined ? args.end_date : asNullableString(nested.end_date);
+  const dueRaw = args.due_at ?? asString(nested.due_at);
+
+  if (!dateRaw) {
+    throw new Error(
+      'Missing date. Pass top-level fields, not nested under "data": title, include_to_calendar, date, end_date, due_at.'
+    );
+  }
+
+  const date = toKvantDatetime(dateRaw);
+  const end_date =
+    endRaw === undefined || endRaw === null ? (endRaw ?? null) : toKvantDatetime(endRaw);
+  let due_at = dueRaw ? toKvantDatetime(dueRaw) : end_date ?? date;
+
+  // Slot start/end cannot be later than the communication deadline.
+  if (date > due_at) {
+    due_at = date;
+  }
+  if (end_date && end_date > due_at) {
+    due_at = end_date;
+  }
+
+  const title = titleRaw?.trim() ? titleRaw : DEFAULT_SLOT_TITLE;
+
+  return {
+    title,
+    include_to_calendar: includeRaw ?? 1,
+    date,
+    end_date,
+    due_at,
+  };
+}
+
+const calendarSlotShape = {
+  task_id: z.number().describe("Numeric communication id (not key)."),
+  title: z
+    .string()
+    .optional()
+    .describe(
+      `Calendar slot title at the TOP LEVEL (not under data). Copy task_actions[].title from kvant_tasks_get, or omit for "${DEFAULT_SLOT_TITLE}".`
+    ),
+  include_to_calendar: z
+    .number()
+    .optional()
+    .describe("0 = do not add the slot to calendar, 1 = add. Top level. Default 1."),
+  date: z
+    .string()
+    .optional()
+    .describe(`Required slot start at the TOP LEVEL. ${KVANT_WALL_TIME} Must not be later than due_at.`),
+  end_date: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      `Slot end at the TOP LEVEL, or null. ${KVANT_WALL_TIME} Must not be later than due_at. If the user sets the deadline and the action to the same time, use that time for end_date too — do not add 30 minutes past due_at.`
+    ),
+  due_at: z
+    .string()
+    .optional()
+    .describe(
+      `New communication deadline at the TOP LEVEL. ${KVANT_WALL_TIME} Must be >= date and >= end_date (the API rejects a slot that ends after due_at). For an ordinary deadline (required_deadline=0/null), send the postponed due_at here — that is how the deadline moves. If omitted, becomes the slot end. Only if required_deadline=1 can due_at not be later than the existing due_at.`
+    ),
+  data: z
+    .record(z.unknown())
+    .optional()
+    .describe(
+      "Do not use. Fields must be top-level. Nested title/date/end_date/due_at/include_to_calendar here are still merged."
+    ),
+};
 
 export function registerTasksTools(server: McpServer) {
   server.tool(
@@ -253,29 +371,16 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_to_work",
-    "Take your own communication into work (Accepted -> In Progress) and set the calendar slot / deadline. Performer only (you are to_user_id); do not call for others or track. This is a stage change, not a later reschedule (that is kvant_tasks_move_action). If required_deadline=1, due_at cannot be later than the existing deadline. If required_deadline=1 and the existing due_at is already past, do not call this tool — close immediately with kvant_tasks_done (is_done=1 or 0). All body fields are required.",
-    {
-      task_id: z.number().describe("Numeric communication id (not key)."),
-      title: z.string().describe('Calendar slot title. Example: "Выполнить действие".'),
-      include_to_calendar: z
-        .number()
-        .describe("0 = do not add the slot to calendar, 1 = add."),
-      date: z.string().describe("Slot start datetime."),
-      end_date: z
-        .string()
-        .nullable()
-        .describe("Slot end datetime, or null if none. Required (may be null)."),
-      due_at: z
-        .string()
-        .describe(
-          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at; if that due_at is already past, do not call this tool — use kvant_tasks_done (is_done=1 or 0)."
-        ),
-    },
-    async ({ task_id, title, include_to_calendar, date, end_date, due_at }) => {
+    "Take your own communication into work (Accepted -> In Progress) and set the calendar slot / deadline. Performer only (you are to_user_id); do not call for others or track. This is a stage change, not a later reschedule (that is kvant_tasks_move_action). Call kvant_tasks_get first. Pass title, include_to_calendar, date, end_date, due_at at the TOP LEVEL — never nested under data. " +
+      KVANT_WALL_TIME +
+      " date and end_date cannot be later than due_at. Ordinary deadline (required_deadline=0/null): due_at may be any new time as long as the slot is not after it. Hard deadline (required_deadline=1) is the exception: due_at cannot be later than the existing deadline; if that due_at is already past, close with kvant_tasks_done (is_done=1 or 0) instead of this tool.",
+    calendarSlotShape,
+    async (args) => {
+      const body = resolveCalendarSlotBody(args);
       const result = await kvantRequest({
         method: "POST",
-        path: `/tasks/${task_id}/to_work`,
-        body: { title, include_to_calendar, date, end_date, due_at },
+        path: `/tasks/${args.task_id}/to_work`,
+        body,
       });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
@@ -372,29 +477,16 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_move_action",
-    "First choice to postpone / reschedule / change due date or calendar slot of a communication already In Progress (перенести срок). Performer only, and only your own (you are to_user_id); do not call for others or track, and not unless state_id is In Progress. Same body as to_work (title, slot, due_at). Not for taking into work (use kvant_tasks_to_work), not for content edits (use kvant_tasks_update / kvant_tasks_input_value), and not for stage changes. If required_deadline=1, due_at cannot be later than the existing deadline. If required_deadline=1 and that due_at is already past, do not call this tool — close immediately with kvant_tasks_done (is_done=1 or 0). All body fields are required.",
-    {
-      task_id: z.number().describe("Numeric communication id (not key)."),
-      title: z.string().describe('Calendar slot title. Example: "Выполнить действие".'),
-      include_to_calendar: z
-        .number()
-        .describe("0 = do not add the slot to calendar, 1 = add."),
-      date: z.string().describe("Slot start datetime."),
-      end_date: z
-        .string()
-        .nullable()
-        .describe("Slot end datetime, or null if none. Required (may be null)."),
-      due_at: z
-        .string()
-        .describe(
-          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at; if that due_at is already past, do not call this tool — use kvant_tasks_done (is_done=1 or 0)."
-        ),
-    },
-    async ({ task_id, title, include_to_calendar, date, end_date, due_at }) => {
+    "Postpone an ordinary deadline or move the calendar slot of a communication already In Progress (перенести срок). For required_deadline=0/null this is allowed: send the NEW due_at together with the new slot. Performer only (you are to_user_id); In Progress only. Call kvant_tasks_get first and copy title from task_actions. Pass title, include_to_calendar, date, end_date, due_at at the TOP LEVEL — never nested under data. " +
+      KVANT_WALL_TIME +
+      " The slot cannot end after due_at (API 400 otherwise). If the user names one time for both action and deadline, use that time for date, end_date, AND due_at — do not add 30 minutes after due_at. If they want a 30-minute slot starting at that time, set due_at to the slot end. Hard deadline (required_deadline=1) is the only case you must not postpone past the existing due_at. Not for taking into work (kvant_tasks_to_work) or content edits.",
+    calendarSlotShape,
+    async (args) => {
+      const body = resolveCalendarSlotBody(args);
       const result = await kvantRequest({
         method: "POST",
-        path: `/tasks/${task_id}/actions`,
-        body: { title, include_to_calendar, date, end_date, due_at },
+        path: `/tasks/${args.task_id}/actions`,
+        body,
       });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
