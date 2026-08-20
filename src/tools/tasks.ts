@@ -16,27 +16,26 @@ const TASK_RESPONSE_GUIDE =
   "List request type (my/control/track) is the list tab, not type_id. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
   "function_user_id=org function/role the performer is acting in — same user can have several functions. " +
-  "due_at=deadline (null if none). required_deadline=0 or null is an ordinary deadline: the performer may postpone it with kvant_tasks_move_action (In Progress) by sending a new due_at. required_deadline=1 is the exception — a hard deadline that cannot be set later than the existing due_at; if that due_at is already past, do not take into work or reschedule, close with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
+  "due_at=deadline (null if none). required_deadline=0 or null is an ordinary deadline: postpone by PUT (kvant_tasks_update or the first step inside kvant_tasks_move_action) then POST /actions for the calendar slot. POST /actions alone does not raise the stored due_at. PUT body must include id, creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id, and relation_track_users: null — do not rebuild relation_track_users from get. required_deadline=1 is the exception — a hard deadline that cannot be set later than the existing due_at; if that due_at is already past, do not take into work or reschedule, close with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
   "time_to_accomplish=planned minutes (default often 30); time_to_accomplish_fact=actual minutes when done (null until then). " +
   "not_need_approve=1 skips the Approve stage; null/0 = sender must approve. " +
   "repeat_task_id set when spawned from a recurring template. " +
   "proof is an object when evidence is required (else null): type 1=text (min_requirement=min chars); screenshot/image seen as type 2; other kinds include link, photo, file (remaining numeric map unknown). check_description=verification criteria. " +
   "task_actions are calendar slots (meetings: date, end_date, include_to_calendar); empty when unused. " +
   "relation_track_users.type 1=sender (creator), not the performer; type 2=additional participant/observer. user_type unknown. " +
-  "Dates in responses often look like 2026-08-24 12:00:00+03. When writing date/end_date/due_at to to_work or move_action, send YYYY-MM-DD HH:mm:ss with no T and no timezone (2026-08-24 12:00:00). The calendar slot (date and end_date) cannot be later than due_at — if the user names one time for both the action and the deadline, set end_date and due_at to that time (do not add 30 minutes after the deadline). " +
+  "Dates in responses often look like 2026-08-24 12:00:00+03. When writing date/end_date/due_at, send YYYY-MM-DD HH:mm:ss with no T and no timezone (2026-08-24 12:00:00). Raise due_at with PUT first if the new slot is later than the stored deadline; the slot (date and end_date) cannot be later than the stored due_at. " +
   "Flags 0/1: is_canceled, is_active. is_done answers whether the expected result (communication_result) was achieved: 1=yes, 0=closed without achieving it (closing is still allowed). " +
   "program_id=project; business_process and business_process_action_queue_id link a process; mass_task_id=bulk-created group. " +
   "UI sort only: position, position_control, section_position_id. " +
   "Nested arrays programs, attentions, required_comments, task_labels, meeting_queues are empty when unused. " +
   "Unknown — do not infer: closed_overdue; due_changes; control_result; result_text; problem_status; policy_for_study_count; product; remaining proof.type and input.type numbers; relation_track_users.user_type.";
 
-const UNSPECIFIED_PAYLOAD =
-  "API body field names are not yet specified. Pass the OpenAPI/Make JSON as-is. Do not invent names from the list/get response (store/update payloads are form fields, not inputs_values).";
-
 const KVANT_WALL_TIME =
   'Format: YYYY-MM-DD HH:mm:ss with no T and no timezone, e.g. "2026-08-24 12:00:00". Do not send +03, +03:00, or ISO 8601.';
 
 const DEFAULT_SLOT_TITLE = "Выполнить действие";
+
+type NestedRecord = Record<string, unknown>;
 
 type CalendarSlotArgs = {
   task_id: number;
@@ -45,7 +44,32 @@ type CalendarSlotArgs = {
   date?: string;
   end_date?: string | null;
   due_at?: string;
-  data?: Record<string, unknown>;
+  data?: NestedRecord;
+  creator_id?: number;
+  to_user_id?: number;
+  required_deadline?: number;
+  function_user_id?: number | null;
+  program_id?: number | null;
+};
+
+type PostponePutBody = {
+  id: number;
+  due_at: string;
+  creator_id: number;
+  to_user_id: number;
+  required_deadline: number;
+  function_user_id: number | null;
+  program_id: number | null;
+  relation_track_users: null;
+};
+
+type PostponeIdentity = {
+  creator_id: number;
+  to_user_id: number;
+  required_deadline: number;
+  function_user_id: number | null;
+  program_id: number | null;
+  due_at?: string | null;
 };
 
 function asString(value: unknown): string | undefined {
@@ -62,11 +86,86 @@ function asNullableString(value: unknown): string | null | undefined {
   return undefined;
 }
 
+function asNullableNumber(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return undefined;
+}
+
 function toKvantDatetime(value: string): string {
   const trimmed = value.trim();
   const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?/);
   if (!match) return trimmed;
   return `${match[1]} ${match[2]}:${match[3] ?? "00"}`;
+}
+
+type IdentityArgs = {
+  creator_id?: number;
+  to_user_id?: number;
+  required_deadline?: number;
+  function_user_id?: number | null;
+  program_id?: number | null;
+  data?: NestedRecord;
+};
+
+function pickIdentity(args: IdentityArgs): Omit<PostponeIdentity, "due_at"> | null {
+  const nested = args.data && typeof args.data === "object" ? args.data : {};
+  const creator_id = args.creator_id ?? asFiniteNumber(nested.creator_id);
+  const to_user_id = args.to_user_id ?? asFiniteNumber(nested.to_user_id);
+  const required_deadline = args.required_deadline ?? asFiniteNumber(nested.required_deadline);
+  const function_user_id =
+    args.function_user_id !== undefined
+      ? args.function_user_id
+      : asNullableNumber(nested.function_user_id);
+  const program_id =
+    args.program_id !== undefined ? args.program_id : asNullableNumber(nested.program_id);
+
+  if (creator_id === undefined || to_user_id === undefined || required_deadline === undefined) {
+    return null;
+  }
+
+  return {
+    creator_id,
+    to_user_id,
+    required_deadline,
+    function_user_id: function_user_id ?? null,
+    program_id: program_id ?? null,
+  };
+}
+
+function postponePutBody(taskId: number, identity: Omit<PostponeIdentity, "due_at">, dueAt: string): PostponePutBody {
+  return {
+    id: taskId,
+    due_at: toKvantDatetime(dueAt),
+    creator_id: identity.creator_id,
+    to_user_id: identity.to_user_id,
+    required_deadline: identity.required_deadline,
+    function_user_id: identity.function_user_id,
+    program_id: identity.program_id,
+    relation_track_users: null,
+  };
+}
+
+async function fetchTaskByNumericId(taskId: number): Promise<PostponeIdentity | null> {
+  try {
+    const result = (await kvantRequest({
+      method: "GET",
+      path: `/tasks/${taskId}`,
+    })) as PostponeIdentity & { id?: number };
+    const creator_id = asFiniteNumber(result?.creator_id);
+    const to_user_id = asFiniteNumber(result?.to_user_id);
+    if (creator_id === undefined || to_user_id === undefined) return null;
+    return {
+      creator_id,
+      to_user_id,
+      required_deadline: asFiniteNumber(result.required_deadline) ?? 0,
+      function_user_id: asNullableNumber(result.function_user_id) ?? null,
+      program_id: asNullableNumber(result.program_id) ?? null,
+      due_at: typeof result.due_at === "string" ? result.due_at : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function resolveCalendarSlotBody(args: CalendarSlotArgs): {
@@ -141,7 +240,7 @@ const calendarSlotShape = {
     .string()
     .optional()
     .describe(
-      `New communication deadline at the TOP LEVEL. ${KVANT_WALL_TIME} Must be >= date and >= end_date (the API rejects a slot that ends after due_at). For an ordinary deadline (required_deadline=0/null), send the postponed due_at here — that is how the deadline moves. If omitted, becomes the slot end. Only if required_deadline=1 can due_at not be later than the existing due_at.`
+      `New communication deadline at the TOP LEVEL. ${KVANT_WALL_TIME} Must be >= date and >= end_date. If omitted, becomes the slot end. POST /actions cannot raise the stored due_at — kvant_tasks_move_action PUTs first when identity fields are present.`
     ),
   data: z
     .record(z.unknown())
@@ -151,10 +250,40 @@ const calendarSlotShape = {
     ),
 };
 
+const postponeIdentityShape = {
+  creator_id: z
+    .number()
+    .optional()
+    .describe("Sender id from list/get/todo. Needed so move_action can PUT due_at before the slot."),
+  to_user_id: z
+    .number()
+    .optional()
+    .describe("Performer id from list/get/todo. Copy from the communication object."),
+  required_deadline: z
+    .number()
+    .optional()
+    .describe("0/null = ordinary, may postpone. 1 = hard: cannot PUT due_at later than the stored deadline."),
+  function_user_id: z
+    .number()
+    .nullable()
+    .optional()
+    .describe("Org function/role id from the communication, or null."),
+  program_id: z
+    .number()
+    .nullable()
+    .optional()
+    .describe("Project id from the communication, or null."),
+};
+
+const moveActionShape = {
+  ...calendarSlotShape,
+  ...postponeIdentityShape,
+};
+
 export function registerTasksTools(server: McpServer) {
   server.tool(
     "kvant_tasks_list",
-    "Search/list communications. POST /tasks/index with a flat JSON body (not wrapped in filters). type is required and selects the list tab: my (performer), control (sender), track (participant) — not the communication kind (that is type_id). There is no combined list: to see all communications, call this tool three times (my, control, track). Defaults: states=[1,2,3,4,5], offset=0, limit=10. For today's agenda use kvant_tasks_get_todo, not type. " +
+    "List communications. POST /tasks/index with a FLAT JSON body — do not wrap fields in filters. There is no search parameter: to find a task by name (e.g. акты) call type my (and control/track if needed) and read inputs_values. type selects the list tab: my (performer), control (sender), track (participant) — not type_id. No combined list: for all communications call three times. Defaults: states=[1,2,3,4,5], offset=0, limit=10. kvant_tasks_get_todo is today's agenda by date, not a name search. " +
       TASK_RESPONSE_GUIDE,
     {
       states: z
@@ -165,8 +294,9 @@ export function registerTasksTools(server: McpServer) {
         ),
       type: z
         .enum(["my", "control", "track"])
+        .optional()
         .describe(
-          'Required list tab. "my" = current user is performer/recipient. "control" = current user is sender. "track" = current user is a participant (monitor only). No combined list — for all communications call three times with my, control, and track. Not for today\'s agenda — use kvant_tasks_get_todo.'
+          'Required list tab at the TOP LEVEL (not under filters). "my" = current user is performer/recipient. "control" = current user is sender. "track" = current user is a participant (monitor only). No combined list — for all communications call three times with my, control, and track. Not for today\'s agenda — use kvant_tasks_get_todo. No search field.'
         ),
       offset: z.number().optional().describe("Pagination offset. Default 0."),
       limit: z.number().optional().describe("Page size. Default 10."),
@@ -199,22 +329,66 @@ export function registerTasksTools(server: McpServer) {
         .boolean()
         .optional()
         .describe("If true, only communications with violations/errors. Default false. How this maps to problem_status is unknown — do not infer."),
+      filters: z
+        .record(z.unknown())
+        .optional()
+        .describe(
+          'Do not use. Pass type, states, limit, etc. at the top level. Nested type/states here are still merged. There is no search field.'
+        ),
     },
     async (args) => {
+      const nested = args.filters && typeof args.filters === "object" ? args.filters : {};
+      const typeRaw = args.type ?? nested.type;
+      const type =
+        typeRaw === "my" || typeRaw === "control" || typeRaw === "track" ? typeRaw : undefined;
+      if (!type) {
+        throw new Error(
+          'Missing type. Pass type at the top level ("my" | "control" | "track"), not nested under filters. There is no search field — list with type my and read inputs_values.'
+        );
+      }
+      const states = args.states ?? (Array.isArray(nested.states) ? (nested.states as number[]) : undefined);
+      const offset = args.offset ?? asFiniteNumber(nested.offset);
+      const limit = args.limit ?? asFiniteNumber(nested.limit);
+      const creator_user_ids =
+        args.creator_user_ids !== undefined
+          ? args.creator_user_ids
+          : ((nested.creator_user_ids as number[] | null | undefined) ?? null);
+      const deadline_period_start =
+        args.deadline_period_start !== undefined
+          ? args.deadline_period_start
+          : asNullableString(nested.deadline_period_start) ?? null;
+      const deadline_period_end =
+        args.deadline_period_end !== undefined
+          ? args.deadline_period_end
+          : asNullableString(nested.deadline_period_end) ?? null;
+      const to_user_ids =
+        args.to_user_ids !== undefined
+          ? args.to_user_ids
+          : ((nested.to_user_ids as number[] | null | undefined) ?? null);
+      const user_labels =
+        args.user_labels !== undefined
+          ? args.user_labels
+          : ((nested.user_labels as Array<string | number> | null | undefined) ?? null);
+      const with_communication_errors =
+        args.with_communication_errors ??
+        (typeof nested.with_communication_errors === "boolean"
+          ? nested.with_communication_errors
+          : false);
+
       const result = await kvantRequest({
         method: "POST",
         path: "/tasks/index",
         body: {
-          states: args.states ?? [1, 2, 3, 4, 5],
-          type: args.type,
-          offset: args.offset ?? 0,
-          limit: args.limit ?? 10,
-          creator_user_ids: args.creator_user_ids ?? null,
-          deadline_period_start: args.deadline_period_start ?? null,
-          deadline_period_end: args.deadline_period_end ?? null,
-          to_user_ids: args.to_user_ids ?? null,
-          user_labels: args.user_labels ?? null,
-          with_communication_errors: args.with_communication_errors ?? false,
+          states: states ?? [1, 2, 3, 4, 5],
+          type,
+          offset: offset ?? 0,
+          limit: limit ?? 10,
+          creator_user_ids,
+          deadline_period_start,
+          deadline_period_end,
+          to_user_ids,
+          user_labels,
+          with_communication_errors,
         },
       });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -311,14 +485,73 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_update",
-    "Rare. Mainly a sender (creator) method to rewrite the communication description itself. The performer almost never needs this. Do NOT use this to post work progress, news, or any update about work — that belongs in kvant_tasks_add_log. Not every communication is editable by the current user. Do NOT use this to change due date, deadline, or calendar slot (kvant_tasks_move_action if In Progress, kvant_tasks_to_work to take into work) and not for stage changes (accept/done/cancel). " +
-      UNSPECIFIED_PAYLOAD,
+    "First step to postpone an ordinary deadline (required_deadline=0/null): PUT due_at. Copy creator_id, to_user_id, required_deadline, function_user_id, program_id from list/get/todo. Always sends id and relation_track_users: null (do not rebuild that array — it breaks the PUT). " +
+      KVANT_WALL_TIME +
+      " Then move the calendar slot with kvant_tasks_move_action (that tool also PUTs first when identity fields are passed). Not for work news (kvant_tasks_add_log). Not for stage changes. Hard deadline (required_deadline=1): do not set due_at later than the stored deadline.",
     {
-      task_id: z.number().describe("Numeric communication id (not key)."),
-      data: z.record(z.unknown()).describe(UNSPECIFIED_PAYLOAD),
+      task_id: z.number().describe("Numeric communication id (not key). Also sent as body id."),
+      creator_id: z
+        .number()
+        .optional()
+        .describe("Sender id from the communication object. Required after merge."),
+      to_user_id: z
+        .number()
+        .optional()
+        .describe("Performer id from the communication object. Required after merge."),
+      required_deadline: z
+        .number()
+        .optional()
+        .describe("0 = ordinary (can postpone). 1 = hard. Required after merge."),
+      due_at: z
+        .string()
+        .optional()
+        .describe(`New deadline. Required. ${KVANT_WALL_TIME}`),
+      function_user_id: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("Org function/role id, or null."),
+      program_id: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("Project id, or null."),
+      data: z
+        .record(z.unknown())
+        .optional()
+        .describe(
+          "Do not use. Pass creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id at the top level. Nested fields here are still merged. relation_track_users is always sent as null."
+        ),
     },
-    async ({ task_id, data }) => {
-      const result = await kvantRequest({ method: "PUT", path: `/tasks/${task_id}`, body: data });
+    async (args) => {
+      const nested = args.data && typeof args.data === "object" ? args.data : {};
+      const dueRaw = args.due_at ?? asString(nested.due_at);
+      if (!dueRaw) {
+        throw new Error(
+          'Missing due_at. Pass top-level fields, not nested under "data": creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id.'
+        );
+      }
+      const identity = pickIdentity(args);
+      if (!identity) {
+        throw new Error(
+          "Missing creator_id, to_user_id, or required_deadline. Copy them from kvant_tasks_list, kvant_tasks_get, or kvant_tasks_get_todo."
+        );
+      }
+      if (identity.required_deadline === 1) {
+        const fetched = await fetchTaskByNumericId(args.task_id);
+        const currentDue = fetched?.due_at ? toKvantDatetime(fetched.due_at) : undefined;
+        if (currentDue && toKvantDatetime(dueRaw) > currentDue) {
+          throw new Error(
+            "required_deadline=1 is a hard deadline: cannot postpone due_at later than the stored deadline. If that due_at is already past, close with kvant_tasks_done (is_done=1 or 0)."
+          );
+        }
+      }
+      const body = postponePutBody(args.task_id, identity, dueRaw);
+      const result = await kvantRequest({
+        method: "PUT",
+        path: `/tasks/${args.task_id}`,
+        body,
+      });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -451,7 +684,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_input_value",
-    "Update one communication field (POST /tasks/input_value). Changes the value that later appears in inputs_values. Not for news/progress about the work (use kvant_tasks_add_log). Not every communication is editable by the current user. Not for due date / calendar slot (use kvant_tasks_to_work or kvant_tasks_move_action). All body fields are required.",
+    "Update one communication field (POST /tasks/input_value). Changes the value that later appears in inputs_values. Not for news/progress about the work (use kvant_tasks_add_log). Not every communication is editable by the current user. Not for due date / calendar slot (use kvant_tasks_update then kvant_tasks_move_action, or kvant_tasks_to_work to take into work). All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key). Sent in the body, not the URL."),
       value: z.string().describe("New field value."),
@@ -477,18 +710,66 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_move_action",
-    "Postpone an ordinary deadline or move the calendar slot of a communication already In Progress (перенести срок). For required_deadline=0/null this is allowed: send the NEW due_at together with the new slot. Performer only (you are to_user_id); In Progress only. Call kvant_tasks_get first and copy title from task_actions. Pass title, include_to_calendar, date, end_date, due_at at the TOP LEVEL — never nested under data. " +
+    "Postpone an ordinary deadline and/or move the calendar slot of a communication already In Progress (перенести срок). This tool PUTs due_at first (same body as kvant_tasks_update: id + identity fields + relation_track_users: null), then POST /actions. POST /actions alone cannot raise the stored due_at. After list/get/todo pass creator_id, to_user_id, required_deadline, function_user_id, program_id together with the slot (or they are loaded via GET /tasks/{id} when that works). Performer only (you are to_user_id); In Progress only. " +
       KVANT_WALL_TIME +
-      " The slot cannot end after due_at (API 400 otherwise). If the user names one time for both action and deadline, use that time for date, end_date, AND due_at — do not add 30 minutes after due_at. If they want a 30-minute slot starting at that time, set due_at to the slot end. Hard deadline (required_deadline=1) is the only case you must not postpone past the existing due_at. Not for taking into work (kvant_tasks_to_work) or content edits.",
-    calendarSlotShape,
+      " If the user names one time for both action and deadline, use that time for date, end_date, AND due_at — do not add 30 minutes after due_at. Hard deadline (required_deadline=1) cannot be PUT later than the stored due_at. Not for taking into work (kvant_tasks_to_work) or content/news edits.",
+    moveActionShape,
     async (args) => {
-      const body = resolveCalendarSlotBody(args);
-      const result = await kvantRequest({
+      const slot = resolveCalendarSlotBody(args);
+      let identity = pickIdentity(args);
+      let storedDueAt: string | null | undefined;
+      let putResult: unknown;
+
+      if (!identity) {
+        const fetched = await fetchTaskByNumericId(args.task_id);
+        if (fetched) {
+          identity = {
+            creator_id: fetched.creator_id,
+            to_user_id: fetched.to_user_id,
+            required_deadline: fetched.required_deadline,
+            function_user_id: fetched.function_user_id,
+            program_id: fetched.program_id,
+          };
+          storedDueAt = fetched.due_at;
+        }
+      } else if (identity.required_deadline === 1 && storedDueAt == null) {
+        storedDueAt = (await fetchTaskByNumericId(args.task_id))?.due_at;
+      }
+
+      if (!identity) {
+        throw new Error(
+          "Cannot postpone: missing creator_id, to_user_id, required_deadline (and function_user_id, program_id). Copy them from kvant_tasks_list, kvant_tasks_get, or kvant_tasks_get_todo, then call this tool again. POST /actions will not raise the stored due_at by itself."
+        );
+      }
+
+      if (identity.required_deadline === 1) {
+        const currentDue = storedDueAt ? toKvantDatetime(storedDueAt) : undefined;
+        if (currentDue && slot.due_at > currentDue) {
+          throw new Error(
+            "required_deadline=1 is a hard deadline: cannot postpone due_at later than the stored deadline. If that due_at is already past, close with kvant_tasks_done (is_done=1 or 0)."
+          );
+        }
+      } else {
+        putResult = await kvantRequest({
+          method: "PUT",
+          path: `/tasks/${args.task_id}`,
+          body: postponePutBody(args.task_id, identity, slot.due_at),
+        });
+      }
+
+      const actionResult = await kvantRequest({
         method: "POST",
         path: `/tasks/${args.task_id}/actions`,
-        body,
+        body: slot,
       });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ due_at_put: putResult ?? null, action: actionResult }, null, 2),
+          },
+        ],
+      };
     }
   );
 
@@ -544,7 +825,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_get_todo",
-    "Get communications with todo list by date",
+    "Get communications on the todo/agenda for one date (YYYY-MM-DD). Not a name search — to find a task by title use kvant_tasks_list with type my and read inputs_values.",
     { date: z.string().describe("Date in YYYY-MM-DD format") },
     async ({ date }) => {
       const result = await kvantRequest({ method: "GET", path: `/tasks/todo/${date}` });
