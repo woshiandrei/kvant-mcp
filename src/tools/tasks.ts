@@ -16,7 +16,7 @@ const TASK_RESPONSE_GUIDE =
   "List request type (my/control/track) is the list tab, not type_id. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
   "function_user_id=org function/role the performer is acting in — same user can have several functions. " +
-  "due_at=deadline (null if none). required_deadline=1 is a hard deadline: you cannot set due_at later than the existing due_at, and if that due_at is already past you cannot take the communication into work. required_deadline=0/null can be postponed. Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
+  "due_at=deadline (null if none). required_deadline=1 is a hard deadline: you cannot set due_at later than the existing due_at. If that due_at is already past, do not take into work or reschedule — close immediately with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). required_deadline=0/null can be postponed. The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
   "time_to_accomplish=planned minutes (default often 30); time_to_accomplish_fact=actual minutes when done (null until then). " +
   "not_need_approve=1 skips the Approve stage; null/0 = sender must approve. " +
   "repeat_task_id set when spawned from a recurring template. " +
@@ -130,7 +130,7 @@ export function registerTasksTools(server: McpServer) {
         .number()
         .optional()
         .describe(
-          "1 = hard deadline: cannot later postpone past this due_at, and cannot take into work if due_at is already past. 0 = can be moved. Default 0."
+          "1 = hard deadline: cannot later postpone past this due_at; if due_at is already past the performer cannot take it into work and must close with kvant_tasks_done (is_done 0 or 1). 0 = can be moved. Default 0."
         ),
       inputs_values: z
         .array(
@@ -207,8 +207,8 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_delete",
-    "Delete a communication",
-    { task_id: z.number().describe("Task ID") },
+    "Delete only a communication you created (you are creator_id). Do not use this to cancel one already Accepted or In Progress — close it with kvant_tasks_done (is_done=0 if the expected result was not achieved).",
+    { task_id: z.number().describe("Numeric communication id (not key).") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "DELETE", path: `/tasks/${task_id}` });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -217,14 +217,14 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_cancel",
-    "Sender rejects a communication that is on Approve (from others) and returns it to the performer for revision. All body fields are required.",
+    "Sender rejects a communication that is on Approve (from others) and returns it to the performer for revision. Not a way to cancel after Accepted or In Progress — those stages close with kvant_tasks_done (including is_done=0). All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       text: z.string().describe("Revision comment for the performer, e.g. what to redo."),
       required_deadline: z
         .number()
         .describe(
-          "1 = hard deadline (cannot later postpone past due_at; cannot take into work if due_at is already past), 0 = can be moved."
+          "1 = hard deadline (cannot later postpone past due_at; if due_at is already past, performer cannot take into work and must close with kvant_tasks_done), 0 = can be moved."
         ),
       due_at: z
         .string()
@@ -253,7 +253,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_to_work",
-    "Take your communication into work (Accepted -> In Progress) and set the calendar slot / deadline. This is a stage change, not a later reschedule (that is kvant_tasks_move_action). If required_deadline=1 and the existing due_at is already past, taking into work is not allowed. If required_deadline=1, due_at cannot be later than the existing deadline. All body fields are required.",
+    "Take your own communication into work (Accepted -> In Progress) and set the calendar slot / deadline. Performer only (you are to_user_id); do not call for others or track. This is a stage change, not a later reschedule (that is kvant_tasks_move_action). If required_deadline=1, due_at cannot be later than the existing deadline. If required_deadline=1 and the existing due_at is already past, do not call this tool — close immediately with kvant_tasks_done (is_done=1 or 0). All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       title: z.string().describe('Calendar slot title. Example: "Выполнить действие".'),
@@ -268,7 +268,7 @@ export function registerTasksTools(server: McpServer) {
       due_at: z
         .string()
         .describe(
-          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at; if that due_at is already past, do not call this tool."
+          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at; if that due_at is already past, do not call this tool — use kvant_tasks_done (is_done=1 or 0)."
         ),
     },
     async ({ task_id, title, include_to_calendar, date, end_date, due_at }) => {
@@ -283,7 +283,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_done",
-    "Close the communication as performer (moves it to Approve for the sender). This is NOT the final completed state. is_done is whether the expected result was achieved, not whether the task is being closed — you may close with is_done=0. All body fields are required.",
+    "Close the communication as performer (moves it to Approve for the sender). This is NOT the final completed state. After Accepted or In Progress, cancel is not allowed — this is the way out, including is_done=0 when the expected result was not achieved. If required_deadline=1 and due_at is already past, close immediately here (is_done=1 or 0); do not call kvant_tasks_to_work or kvant_tasks_move_action. is_done is whether the expected result was achieved, not whether the task is being closed. All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       comment: z.string().describe("Comment sent with the completion."),
@@ -305,7 +305,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_take_back",
-    "Withdraw/revoke a communication (sender action). The sender takes back a communication they previously sent.",
+    "Withdraw/revoke a communication (sender action) before the performer has Accepted or taken it into work. After Accepted or In Progress this is not a cancel path — the performer closes with kvant_tasks_done (including is_done=0).",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/take_back` });
@@ -372,7 +372,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_move_action",
-    "First choice to postpone / reschedule / change due date or calendar slot of a communication already In Progress (перенести срок). Same body as to_work (title, slot, due_at). Not for taking into work (use kvant_tasks_to_work), not for content edits (use kvant_tasks_update / kvant_tasks_input_value), and not for stage changes. If required_deadline=1, due_at cannot be later than the existing deadline. Not every communication can be rescheduled. All body fields are required.",
+    "First choice to postpone / reschedule / change due date or calendar slot of a communication already In Progress (перенести срок). Performer only, and only your own (you are to_user_id); do not call for others or track, and not unless state_id is In Progress. Same body as to_work (title, slot, due_at). Not for taking into work (use kvant_tasks_to_work), not for content edits (use kvant_tasks_update / kvant_tasks_input_value), and not for stage changes. If required_deadline=1, due_at cannot be later than the existing deadline. If required_deadline=1 and that due_at is already past, do not call this tool — close immediately with kvant_tasks_done (is_done=1 or 0). All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       title: z.string().describe('Calendar slot title. Example: "Выполнить действие".'),
@@ -387,7 +387,7 @@ export function registerTasksTools(server: McpServer) {
       due_at: z
         .string()
         .describe(
-          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at."
+          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at; if that due_at is already past, do not call this tool — use kvant_tasks_done (is_done=1 or 0)."
         ),
     },
     async ({ task_id, title, include_to_calendar, date, end_date, due_at }) => {
