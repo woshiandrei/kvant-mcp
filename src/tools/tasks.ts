@@ -16,7 +16,7 @@ const TASK_RESPONSE_GUIDE =
   "List request type (my/control/track) is the list tab, not type_id. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
   "function_user_id=org function/role the performer is acting in — same user can have several functions. " +
-  "due_at=deadline (null if none). required_deadline=1 means the deadline is mandatory/non-postponable. " +
+  "due_at=deadline (null if none). required_deadline=1 is a hard deadline: you cannot set due_at later than the existing due_at, and if that due_at is already past you cannot take the communication into work. required_deadline=0/null can be postponed. Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
   "time_to_accomplish=planned minutes (default often 30); time_to_accomplish_fact=actual minutes when done (null until then). " +
   "not_need_approve=1 skips the Approve stage; null/0 = sender must approve. " +
   "repeat_task_id set when spawned from a recurring template. " +
@@ -129,7 +129,9 @@ export function registerTasksTools(server: McpServer) {
       required_deadline: z
         .number()
         .optional()
-        .describe("1 = deadline is mandatory/non-postponable, 0 = can be moved. Default 0."),
+        .describe(
+          "1 = hard deadline: cannot later postpone past this due_at, and cannot take into work if due_at is already past. 0 = can be moved. Default 0."
+        ),
       inputs_values: z
         .array(
           z.object({
@@ -191,7 +193,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_update",
-    "Update a communication by numeric id (PUT /tasks/{id}). Not for stage changes (use accept/to_work/done/cancel) and not for rescheduling an in-progress calendar slot (use kvant_tasks_move_action). " +
+    "Rare. Mainly a sender (creator) method to rewrite the communication description itself. The performer almost never needs this. Do NOT use this to post work progress, news, or any update about work — that belongs in kvant_tasks_add_log. Not every communication is editable by the current user. Do NOT use this to change due date, deadline, or calendar slot (kvant_tasks_move_action if In Progress, kvant_tasks_to_work to take into work) and not for stage changes (accept/done/cancel). " +
       UNSPECIFIED_PAYLOAD,
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
@@ -221,7 +223,9 @@ export function registerTasksTools(server: McpServer) {
       text: z.string().describe("Revision comment for the performer, e.g. what to redo."),
       required_deadline: z
         .number()
-        .describe("1 = new deadline is mandatory/non-postponable, 0 = can be moved."),
+        .describe(
+          "1 = hard deadline (cannot later postpone past due_at; cannot take into work if due_at is already past), 0 = can be moved."
+        ),
       due_at: z
         .string()
         .nullable()
@@ -249,7 +253,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_to_work",
-    "Take your communication into work (Accepted -> In Progress) and set the calendar slot / deadline. All body fields are required.",
+    "Take your communication into work (Accepted -> In Progress) and set the calendar slot / deadline. This is a stage change, not a later reschedule (that is kvant_tasks_move_action). If required_deadline=1 and the existing due_at is already past, taking into work is not allowed. If required_deadline=1, due_at cannot be later than the existing deadline. All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       title: z.string().describe('Calendar slot title. Example: "Выполнить действие".'),
@@ -261,7 +265,11 @@ export function registerTasksTools(server: McpServer) {
         .string()
         .nullable()
         .describe("Slot end datetime, or null if none. Required (may be null)."),
-      due_at: z.string().describe("Deadline datetime."),
+      due_at: z
+        .string()
+        .describe(
+          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at; if that due_at is already past, do not call this tool."
+        ),
     },
     async ({ task_id, title, include_to_calendar, date, end_date, due_at }) => {
       const result = await kvantRequest({
@@ -338,7 +346,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_input_value",
-    "Update one communication field (POST /tasks/input_value). Changes the value that later appears in inputs_values. All body fields are required.",
+    "Update one communication field (POST /tasks/input_value). Changes the value that later appears in inputs_values. Not for news/progress about the work (use kvant_tasks_add_log). Not every communication is editable by the current user. Not for due date / calendar slot (use kvant_tasks_to_work or kvant_tasks_move_action). All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key). Sent in the body, not the URL."),
       value: z.string().describe("New field value."),
@@ -364,7 +372,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_move_action",
-    "Reschedule the task_action calendar slot for a communication already in progress. Same body as to_work (title, slot, due_at). Not for taking into work (use kvant_tasks_to_work) and not for stage changes. All body fields are required.",
+    "First choice to postpone / reschedule / change due date or calendar slot of a communication already In Progress (перенести срок). Same body as to_work (title, slot, due_at). Not for taking into work (use kvant_tasks_to_work), not for content edits (use kvant_tasks_update / kvant_tasks_input_value), and not for stage changes. If required_deadline=1, due_at cannot be later than the existing deadline. Not every communication can be rescheduled. All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       title: z.string().describe('Calendar slot title. Example: "Выполнить действие".'),
@@ -376,7 +384,11 @@ export function registerTasksTools(server: McpServer) {
         .string()
         .nullable()
         .describe("Slot end datetime, or null if none. Required (may be null)."),
-      due_at: z.string().describe("Deadline datetime."),
+      due_at: z
+        .string()
+        .describe(
+          "Deadline datetime. If required_deadline=1, must not be later than the existing due_at."
+        ),
     },
     async ({ task_id, title, include_to_calendar, date, end_date, due_at }) => {
       const result = await kvantRequest({
@@ -390,7 +402,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_get_logs",
-    "Get logs for a communication",
+    "Get comments/work log for a communication. Progress and news about the work live here, not in the description.",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "GET", path: `/tasks/${task_id}/logs` });
@@ -400,10 +412,10 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_add_log",
-    "Add a comment to a communication. All body fields are required.",
+    "Add a comment to a communication. Default way to record news, progress, or any update about work on this communication — use this instead of kvant_tasks_update. All body fields are required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
-      text: z.string().describe("Comment text."),
+      text: z.string().describe("Comment text: news, progress, or a work update on this communication."),
       required: z
         .number()
         .describe("Required. Example 0. Meaning of 1 unknown — do not infer."),
