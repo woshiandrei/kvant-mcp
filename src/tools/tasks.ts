@@ -28,6 +28,7 @@ const TASK_RESPONSE_GUIDE =
   "program_id=project; business_process and business_process_action_queue_id link a process; mass_task_id=bulk-created group. " +
   "UI sort only: position, position_control, section_position_id. " +
   "Nested arrays programs, attentions, required_comments, task_labels, meeting_queues are empty when unused. " +
+  "Empty title/body/description (or sparse inputs_values) does NOT mean no context: files, acts, links, and clarifications often live only in the work log (comments). kvant_tasks_get already includes logs; after list/todo alone call kvant_tasks_get_logs (or kvant_tasks_get) before saying there are no details or attachments. " +
   "Unknown — do not infer: closed_overdue; due_changes; control_result; result_text; problem_status; policy_for_study_count; product; remaining proof.type and input.type numbers; relation_track_users.user_type.";
 
 const KVANT_WALL_TIME =
@@ -89,6 +90,19 @@ function asNullableString(value: unknown): string | null | undefined {
 function asNullableNumber(value: unknown): number | null | undefined {
   if (value === null) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
+  return undefined;
+}
+
+/** Resolve numeric communication id from a get/list-shaped payload. */
+function extractTaskId(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const root = payload as NestedRecord;
+  const direct = asFiniteNumber(root.id);
+  if (direct !== undefined) return direct;
+  const data = root.data;
+  if (data && typeof data === "object") {
+    return asFiniteNumber((data as NestedRecord).id);
+  }
   return undefined;
 }
 
@@ -397,11 +411,28 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_get",
-    "Get a communication by string key (not numeric id). " + TASK_RESPONSE_GUIDE,
+    "Get a communication by string key (not numeric id). Also loads the work log (comments): response is { communication, logs }. Read logs for files, acts, links, and clarifications — empty description does not mean no details. " +
+      TASK_RESPONSE_GUIDE,
     { task_key: z.string().describe("Communication key from the list/get response (field key), not numeric id.") },
     async ({ task_key }) => {
-      const result = await kvantRequest({ method: "GET", path: `/tasks/${task_key}` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      const communication = await kvantRequest({ method: "GET", path: `/tasks/${task_key}` });
+      const taskId = extractTaskId(communication);
+      let logs: unknown = null;
+      let logs_error: string | undefined;
+      if (taskId !== undefined) {
+        try {
+          logs = await kvantRequest({ method: "GET", path: `/tasks/${taskId}/logs` });
+        } catch (err) {
+          logs_error = err instanceof Error ? err.message : String(err);
+        }
+      } else {
+        logs_error = "Could not resolve numeric task id from communication; call kvant_tasks_get_logs with id from list/todo.";
+      }
+      const payload =
+        logs_error !== undefined
+          ? { communication, logs, logs_error }
+          : { communication, logs };
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
     }
   );
 
@@ -775,7 +806,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_get_logs",
-    "Get comments/work log for a communication. Progress and news about the work live here, not in the description.",
+    "Get comments/work log for a communication. Use when the user asks what to do, what to sign, where files/acts are, or when description looks empty after list/todo — attachments and clarifications often live only here. Progress and news about the work also live here, not in the description. kvant_tasks_get already includes logs; call this when you only have numeric id from list/todo.",
     { task_id: z.number().describe("Task ID") },
     async ({ task_id }) => {
       const result = await kvantRequest({ method: "GET", path: `/tasks/${task_id}/logs` });
