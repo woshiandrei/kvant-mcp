@@ -5,6 +5,7 @@ import { registerProjectTemplatesTools } from "./tools/project-templates.js";
 import { registerUsersTools } from "./tools/users.js";
 import { registerBusinessProcessesTools } from "./tools/business-processes.js";
 import { registerReportsTools } from "./tools/reports.js";
+import { registerOrganizationsTools } from "./tools/organizations.js";
 
 export function createServer(): McpServer {
   const server = new McpServer({
@@ -12,6 +13,7 @@ export function createServer(): McpServer {
     version: "1.0.0",
   });
 
+  registerOrganizationsTools(server);
   registerTasksTools(server);
   registerProjectsTools(server);
   registerProjectTemplatesTools(server);

@@ -1,5 +1,14 @@
 import { z } from "zod";
-import { kvantRequest } from "../client.js";
+import {
+  enrichTasksWithUiUrl,
+  forOrganizations,
+  jsonResult,
+  kvantRequest,
+} from "../client.js";
+import {
+  organizationReadShape,
+  organizationWriteShape,
+} from "../session.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 const TASK_RESPONSE_GUIDE =
@@ -11,7 +20,11 @@ const TASK_RESPONSE_GUIDE =
   "decision decision_title/situation/data/solution; " +
   "meeting meeting_name/description/location. " +
   "input.type: 2=text, 3=proof field, 5=location; other input.type values unknown. " +
-  "Use numeric id with accept/done/cancel/update/delete/to_work; use string key with kvant_tasks_get and UI URLs. " +
+  "Use numeric id with accept/done/cancel/update/delete/to_work; use string key with kvant_tasks_get. " +
+  "When mentioning a task to the user, always include ui_url from the tool response (markdown link). " +
+  "ui_url is https://{subdomain}.kvant.app/tasks/show/{key} — do not invent URLs or use platform.kvant.app/openapi. " +
+  "Multi-org: omit organization for the default org; pass organization name/subdomain from kvant_organizations_list; " +
+  'read tools accept organization "all". ' +
   "state_id: 1=Incoming, 2=Accepted, 3=In Progress, 4=Approve, 5=Completed; prev_state_id is the previous stage (null if never left Incoming). " +
   "List request type (my/control/track) is the list tab, not type_id. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
@@ -30,7 +43,6 @@ const TASK_RESPONSE_GUIDE =
   "Nested arrays programs, attentions, required_comments, task_labels, meeting_queues are empty when unused. " +
   "Empty title/body/description (or sparse inputs_values) does NOT mean no context: files, acts, links, and clarifications often live only in the work log (comments). kvant_tasks_get already includes logs; after list/todo alone call kvant_tasks_get_logs (or kvant_tasks_get) before saying there are no details or attachments. " +
   "Unknown — do not infer: closed_overdue; due_changes; control_result; result_text; problem_status; policy_for_study_count; product; remaining proof.type and input.type numbers; relation_track_users.user_type.";
-
 const KVANT_WALL_TIME =
   'Format: YYYY-MM-DD HH:mm:ss with no T and no timezone, e.g. "2026-08-24 12:00:00". Do not send +03, +03:00, or ISO 8601.';
 
@@ -292,6 +304,12 @@ const postponeIdentityShape = {
 const moveActionShape = {
   ...calendarSlotShape,
   ...postponeIdentityShape,
+  ...organizationWriteShape,
+};
+
+const toWorkShape = {
+  ...calendarSlotShape,
+  ...organizationWriteShape,
 };
 
 export function registerTasksTools(server: McpServer) {
@@ -349,63 +367,67 @@ export function registerTasksTools(server: McpServer) {
         .describe(
           'Do not use. Pass type, states, limit, etc. at the top level. Nested type/states here are still merged. There is no search field.'
         ),
+      ...organizationReadShape,
     },
     async (args) => {
-      const nested = args.filters && typeof args.filters === "object" ? args.filters : {};
-      const typeRaw = args.type ?? nested.type;
-      const type =
-        typeRaw === "my" || typeRaw === "control" || typeRaw === "track" ? typeRaw : undefined;
-      if (!type) {
-        throw new Error(
-          'Missing type. Pass type at the top level ("my" | "control" | "track"), not nested under filters. There is no search field — list with type my and read inputs_values.'
-        );
-      }
-      const states = args.states ?? (Array.isArray(nested.states) ? (nested.states as number[]) : undefined);
-      const offset = args.offset ?? asFiniteNumber(nested.offset);
-      const limit = args.limit ?? asFiniteNumber(nested.limit);
-      const creator_user_ids =
-        args.creator_user_ids !== undefined
-          ? args.creator_user_ids
-          : ((nested.creator_user_ids as number[] | null | undefined) ?? null);
-      const deadline_period_start =
-        args.deadline_period_start !== undefined
-          ? args.deadline_period_start
-          : asNullableString(nested.deadline_period_start) ?? null;
-      const deadline_period_end =
-        args.deadline_period_end !== undefined
-          ? args.deadline_period_end
-          : asNullableString(nested.deadline_period_end) ?? null;
-      const to_user_ids =
-        args.to_user_ids !== undefined
-          ? args.to_user_ids
-          : ((nested.to_user_ids as number[] | null | undefined) ?? null);
-      const user_labels =
-        args.user_labels !== undefined
-          ? args.user_labels
-          : ((nested.user_labels as Array<string | number> | null | undefined) ?? null);
-      const with_communication_errors =
-        args.with_communication_errors ??
-        (typeof nested.with_communication_errors === "boolean"
-          ? nested.with_communication_errors
-          : false);
+      const result = await forOrganizations(args.organization, { allowAll: true }, async () => {
+        const nested = args.filters && typeof args.filters === "object" ? args.filters : {};
+        const typeRaw = args.type ?? nested.type;
+        const type =
+          typeRaw === "my" || typeRaw === "control" || typeRaw === "track" ? typeRaw : undefined;
+        if (!type) {
+          throw new Error(
+            'Missing type. Pass type at the top level ("my" | "control" | "track"), not nested under filters. There is no search field — list with type my and read inputs_values.'
+          );
+        }
+        const states = args.states ?? (Array.isArray(nested.states) ? (nested.states as number[]) : undefined);
+        const offset = args.offset ?? asFiniteNumber(nested.offset);
+        const limit = args.limit ?? asFiniteNumber(nested.limit);
+        const creator_user_ids =
+          args.creator_user_ids !== undefined
+            ? args.creator_user_ids
+            : ((nested.creator_user_ids as number[] | null | undefined) ?? null);
+        const deadline_period_start =
+          args.deadline_period_start !== undefined
+            ? args.deadline_period_start
+            : asNullableString(nested.deadline_period_start) ?? null;
+        const deadline_period_end =
+          args.deadline_period_end !== undefined
+            ? args.deadline_period_end
+            : asNullableString(nested.deadline_period_end) ?? null;
+        const to_user_ids =
+          args.to_user_ids !== undefined
+            ? args.to_user_ids
+            : ((nested.to_user_ids as number[] | null | undefined) ?? null);
+        const user_labels =
+          args.user_labels !== undefined
+            ? args.user_labels
+            : ((nested.user_labels as Array<string | number> | null | undefined) ?? null);
+        const with_communication_errors =
+          args.with_communication_errors ??
+          (typeof nested.with_communication_errors === "boolean"
+            ? nested.with_communication_errors
+            : false);
 
-      const result = await kvantRequest({
-        method: "POST",
-        path: "/tasks/index",
-        body: {
-          states: states ?? [1, 2, 3, 4, 5],
-          type,
-          offset: offset ?? 0,
-          limit: limit ?? 10,
-          creator_user_ids,
-          deadline_period_start,
-          deadline_period_end,
-          to_user_ids,
-          user_labels,
-          with_communication_errors,
-        },
+        const data = await kvantRequest({
+          method: "POST",
+          path: "/tasks/index",
+          body: {
+            states: states ?? [1, 2, 3, 4, 5],
+            type,
+            offset: offset ?? 0,
+            limit: limit ?? 10,
+            creator_user_ids,
+            deadline_period_start,
+            deadline_period_end,
+            to_user_ids,
+            user_labels,
+            with_communication_errors,
+          },
+        });
+        return enrichTasksWithUiUrl(data);
       });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return jsonResult(result);
     }
   );
 
@@ -413,26 +435,33 @@ export function registerTasksTools(server: McpServer) {
     "kvant_tasks_get",
     "Get a communication by string key (not numeric id). Also loads the work log (comments): response is { communication, logs }. Read logs for files, acts, links, and clarifications — empty description does not mean no details. " +
       TASK_RESPONSE_GUIDE,
-    { task_key: z.string().describe("Communication key from the list/get response (field key), not numeric id.") },
-    async ({ task_key }) => {
-      const communication = await kvantRequest({ method: "GET", path: `/tasks/${task_key}` });
-      const taskId = extractTaskId(communication);
-      let logs: unknown = null;
-      let logs_error: string | undefined;
-      if (taskId !== undefined) {
-        try {
-          logs = await kvantRequest({ method: "GET", path: `/tasks/${taskId}/logs` });
-        } catch (err) {
-          logs_error = err instanceof Error ? err.message : String(err);
+    {
+      task_key: z.string().describe("Communication key from the list/get response (field key), not numeric id."),
+      ...organizationReadShape,
+    },
+    async ({ task_key, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: true }, async () => {
+        const communication = await kvantRequest({ method: "GET", path: `/tasks/${task_key}` });
+        const taskId = extractTaskId(communication);
+        let logs: unknown = null;
+        let logs_error: string | undefined;
+        if (taskId !== undefined) {
+          try {
+            logs = await kvantRequest({ method: "GET", path: `/tasks/${taskId}/logs` });
+          } catch (err) {
+            logs_error = err instanceof Error ? err.message : String(err);
+          }
+        } else {
+          logs_error =
+            "Could not resolve numeric task id from communication; call kvant_tasks_get_logs with id from list/todo.";
         }
-      } else {
-        logs_error = "Could not resolve numeric task id from communication; call kvant_tasks_get_logs with id from list/todo.";
-      }
-      const payload =
-        logs_error !== undefined
-          ? { communication, logs, logs_error }
-          : { communication, logs };
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+        const payload =
+          logs_error !== undefined
+            ? { communication, logs, logs_error }
+            : { communication, logs };
+        return enrichTasksWithUiUrl(payload);
+      });
+      return jsonResult(result);
     }
   );
 
@@ -493,24 +522,28 @@ export function registerTasksTools(server: McpServer) {
         .nullable()
         .optional()
         .describe("Project ID. null = none."),
+      ...organizationWriteShape,
     },
     async (args) => {
-      const result = await kvantRequest({
-        method: "POST",
-        path: "/tasks/store",
-        body: {
-          to_user_id: args.to_user_id,
-          due_at: args.due_at ?? null,
-          required_deadline: args.required_deadline ?? 0,
-          type_id: args.type_id,
-          inputs_values: args.inputs_values,
-          function_user_id: args.function_user_id ?? null,
-          task_labels: args.task_labels ?? null,
-          relation_track_users: args.relation_track_users ?? [],
-          program_id: args.program_id ?? null,
-        },
+      const result = await forOrganizations(args.organization, { allowAll: false }, async () => {
+        const data = await kvantRequest({
+          method: "POST",
+          path: "/tasks/store",
+          body: {
+            to_user_id: args.to_user_id,
+            due_at: args.due_at ?? null,
+            required_deadline: args.required_deadline ?? 0,
+            type_id: args.type_id,
+            inputs_values: args.inputs_values,
+            function_user_id: args.function_user_id ?? null,
+            task_labels: args.task_labels ?? null,
+            relation_track_users: args.relation_track_users ?? [],
+            program_id: args.program_id ?? null,
+          },
+        });
+        return enrichTasksWithUiUrl(data);
       });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return jsonResult(result);
     }
   );
 
@@ -553,47 +586,55 @@ export function registerTasksTools(server: McpServer) {
         .describe(
           "Do not use. Pass creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id at the top level. Nested fields here are still merged. relation_track_users is always sent as null."
         ),
+      ...organizationWriteShape,
     },
     async (args) => {
-      const nested = args.data && typeof args.data === "object" ? args.data : {};
-      const dueRaw = args.due_at ?? asString(nested.due_at);
-      if (!dueRaw) {
-        throw new Error(
-          'Missing due_at. Pass top-level fields, not nested under "data": creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id.'
-        );
-      }
-      const identity = pickIdentity(args);
-      if (!identity) {
-        throw new Error(
-          "Missing creator_id, to_user_id, or required_deadline. Copy them from kvant_tasks_list, kvant_tasks_get, or kvant_tasks_get_todo."
-        );
-      }
-      if (identity.required_deadline === 1) {
-        const fetched = await fetchTaskByNumericId(args.task_id);
-        const currentDue = fetched?.due_at ? toKvantDatetime(fetched.due_at) : undefined;
-        if (currentDue && toKvantDatetime(dueRaw) > currentDue) {
+      const result = await forOrganizations(args.organization, { allowAll: false }, async () => {
+        const nested = args.data && typeof args.data === "object" ? args.data : {};
+        const dueRaw = args.due_at ?? asString(nested.due_at);
+        if (!dueRaw) {
           throw new Error(
-            "required_deadline=1 is a hard deadline: cannot postpone due_at later than the stored deadline. If that due_at is already past, close with kvant_tasks_done (is_done=1 or 0)."
+            'Missing due_at. Pass top-level fields, not nested under "data": creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id.'
           );
         }
-      }
-      const body = postponePutBody(args.task_id, identity, dueRaw);
-      const result = await kvantRequest({
-        method: "PUT",
-        path: `/tasks/${args.task_id}`,
-        body,
+        const identity = pickIdentity(args);
+        if (!identity) {
+          throw new Error(
+            "Missing creator_id, to_user_id, or required_deadline. Copy them from kvant_tasks_list, kvant_tasks_get, or kvant_tasks_get_todo."
+          );
+        }
+        if (identity.required_deadline === 1) {
+          const fetched = await fetchTaskByNumericId(args.task_id);
+          const currentDue = fetched?.due_at ? toKvantDatetime(fetched.due_at) : undefined;
+          if (currentDue && toKvantDatetime(dueRaw) > currentDue) {
+            throw new Error(
+              "required_deadline=1 is a hard deadline: cannot postpone due_at later than the stored deadline. If that due_at is already past, close with kvant_tasks_done (is_done=1 or 0)."
+            );
+          }
+        }
+        const body = postponePutBody(args.task_id, identity, dueRaw);
+        return kvantRequest({
+          method: "PUT",
+          path: `/tasks/${args.task_id}`,
+          body,
+        });
       });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_delete",
     "Delete only a communication you created (you are creator_id). Do not use this to cancel one already Accepted or In Progress — close it with kvant_tasks_done (is_done=0 if the expected result was not achieved).",
-    { task_id: z.number().describe("Numeric communication id (not key).") },
-    async ({ task_id }) => {
-      const result = await kvantRequest({ method: "DELETE", path: `/tasks/${task_id}` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      task_id: z.number().describe("Numeric communication id (not key)."),
+      ...organizationWriteShape,
+    },
+    async ({ task_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({ method: "DELETE", path: `/tasks/${task_id}` })
+      );
+      return jsonResult(result);
     }
   );
 
@@ -612,24 +653,32 @@ export function registerTasksTools(server: McpServer) {
         .string()
         .nullable()
         .describe("New deadline datetime, or null to leave/clear. Required (may be null)."),
+      ...organizationWriteShape,
     },
-    async ({ task_id, text, required_deadline, due_at }) => {
-      const result = await kvantRequest({
-        method: "POST",
-        path: `/tasks/${task_id}/cancel`,
-        body: { text, required_deadline, due_at },
-      });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    async ({ task_id, text, required_deadline, due_at, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({
+          method: "POST",
+          path: `/tasks/${task_id}/cancel`,
+          body: { text, required_deadline, due_at },
+        })
+      );
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_accept",
     "Accept an incoming communication (Incoming -> Accepted) or approve a completed one (Approve -> Completed). The action depends on the current stage.",
-    { task_id: z.number().describe("Task ID") },
-    async ({ task_id }) => {
-      const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/accept` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      task_id: z.number().describe("Task ID"),
+      ...organizationWriteShape,
+    },
+    async ({ task_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({ method: "POST", path: `/tasks/${task_id}/accept` })
+      );
+      return jsonResult(result);
     }
   );
 
@@ -638,15 +687,17 @@ export function registerTasksTools(server: McpServer) {
     "Take your own communication into work (Accepted -> In Progress) and set the calendar slot / deadline. Performer only (you are to_user_id); do not call for others or track. This is a stage change, not a later reschedule (that is kvant_tasks_move_action). Call kvant_tasks_get first. Pass title, include_to_calendar, date, end_date, due_at at the TOP LEVEL — never nested under data. " +
       KVANT_WALL_TIME +
       " date and end_date cannot be later than due_at. Ordinary deadline (required_deadline=0/null): due_at may be any new time as long as the slot is not after it. Hard deadline (required_deadline=1) is the exception: due_at cannot be later than the existing deadline; if that due_at is already past, close with kvant_tasks_done (is_done=1 or 0) instead of this tool.",
-    calendarSlotShape,
+    toWorkShape,
     async (args) => {
-      const body = resolveCalendarSlotBody(args);
-      const result = await kvantRequest({
-        method: "POST",
-        path: `/tasks/${args.task_id}/to_work`,
-        body,
+      const result = await forOrganizations(args.organization, { allowAll: false }, async () => {
+        const body = resolveCalendarSlotBody(args);
+        return kvantRequest({
+          method: "POST",
+          path: `/tasks/${args.task_id}/to_work`,
+          body,
+        });
       });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return jsonResult(result);
     }
   );
 
@@ -661,34 +712,47 @@ export function registerTasksTools(server: McpServer) {
         .describe(
           "Was the expected final result (communication_result) achieved? 1=yes, 0=no. The communication can be closed either way."
         ),
+      ...organizationWriteShape,
     },
-    async ({ task_id, comment, is_done }) => {
-      const result = await kvantRequest({
-        method: "POST",
-        path: `/tasks/${task_id}/done`,
-        body: { comment, is_done },
-      });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    async ({ task_id, comment, is_done, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({
+          method: "POST",
+          path: `/tasks/${task_id}/done`,
+          body: { comment, is_done },
+        })
+      );
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_take_back",
     "Withdraw/revoke a communication (sender action) before the performer has Accepted or taken it into work. After Accepted or In Progress this is not a cancel path — the performer closes with kvant_tasks_done (including is_done=0).",
-    { task_id: z.number().describe("Task ID") },
-    async ({ task_id }) => {
-      const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/take_back` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      task_id: z.number().describe("Task ID"),
+      ...organizationWriteShape,
+    },
+    async ({ task_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({ method: "POST", path: `/tasks/${task_id}/take_back` })
+      );
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_cancel_to_work",
     "Return a rejected communication back to work",
-    { task_id: z.number().describe("Task ID") },
-    async ({ task_id }) => {
-      const result = await kvantRequest({ method: "POST", path: `/tasks/${task_id}/cancel_to_work` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      task_id: z.number().describe("Task ID"),
+      ...organizationWriteShape,
+    },
+    async ({ task_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({ method: "POST", path: `/tasks/${task_id}/cancel_to_work` })
+      );
+      return jsonResult(result);
     }
   );
 
@@ -702,14 +766,17 @@ export function registerTasksTools(server: McpServer) {
         .number()
         .nullable()
         .describe("Performer's org function/role ID, or null for default. Required (may be null)."),
+      ...organizationWriteShape,
     },
-    async ({ task_id, to_user_id, function_user_id }) => {
-      const result = await kvantRequest({
-        method: "POST",
-        path: `/tasks/${task_id}/copy_and_create`,
-        body: { to_user_id, function_user_id },
-      });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    async ({ task_id, to_user_id, function_user_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({
+          method: "POST",
+          path: `/tasks/${task_id}/copy_and_create`,
+          body: { to_user_id, function_user_id },
+        })
+      );
+      return jsonResult(result);
     }
   );
 
@@ -728,14 +795,17 @@ export function registerTasksTools(server: McpServer) {
         .unknown()
         .nullable()
         .describe("Proof payload, or null if not updating proof. Required (may be null). Shape beyond null unknown — do not invent."),
+      ...organizationWriteShape,
     },
-    async ({ task_id, value, task_input_id, proof }) => {
-      const result = await kvantRequest({
-        method: "POST",
-        path: "/tasks/input_value",
-        body: { task_id, value, task_input_id, proof },
-      });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    async ({ task_id, value, task_input_id, proof, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({
+          method: "POST",
+          path: "/tasks/input_value",
+          body: { task_id, value, task_input_id, proof },
+        })
+      );
+      return jsonResult(result);
     }
   );
 
@@ -746,71 +816,72 @@ export function registerTasksTools(server: McpServer) {
       " If the user names one time for both action and deadline, use that time for date, end_date, AND due_at — do not add 30 minutes after due_at. Hard deadline (required_deadline=1) cannot be PUT later than the stored due_at. Not for taking into work (kvant_tasks_to_work) or content/news edits.",
     moveActionShape,
     async (args) => {
-      const slot = resolveCalendarSlotBody(args);
-      let identity = pickIdentity(args);
-      let storedDueAt: string | null | undefined;
-      let putResult: unknown;
+      const result = await forOrganizations(args.organization, { allowAll: false }, async () => {
+        const slot = resolveCalendarSlotBody(args);
+        let identity = pickIdentity(args);
+        let storedDueAt: string | null | undefined;
+        let putResult: unknown;
 
-      if (!identity) {
-        const fetched = await fetchTaskByNumericId(args.task_id);
-        if (fetched) {
-          identity = {
-            creator_id: fetched.creator_id,
-            to_user_id: fetched.to_user_id,
-            required_deadline: fetched.required_deadline,
-            function_user_id: fetched.function_user_id,
-            program_id: fetched.program_id,
-          };
-          storedDueAt = fetched.due_at;
+        if (!identity) {
+          const fetched = await fetchTaskByNumericId(args.task_id);
+          if (fetched) {
+            identity = {
+              creator_id: fetched.creator_id,
+              to_user_id: fetched.to_user_id,
+              required_deadline: fetched.required_deadline,
+              function_user_id: fetched.function_user_id,
+              program_id: fetched.program_id,
+            };
+            storedDueAt = fetched.due_at;
+          }
+        } else if (identity.required_deadline === 1 && storedDueAt == null) {
+          storedDueAt = (await fetchTaskByNumericId(args.task_id))?.due_at;
         }
-      } else if (identity.required_deadline === 1 && storedDueAt == null) {
-        storedDueAt = (await fetchTaskByNumericId(args.task_id))?.due_at;
-      }
 
-      if (!identity) {
-        throw new Error(
-          "Cannot postpone: missing creator_id, to_user_id, required_deadline (and function_user_id, program_id). Copy them from kvant_tasks_list, kvant_tasks_get, or kvant_tasks_get_todo, then call this tool again. POST /actions will not raise the stored due_at by itself."
-        );
-      }
-
-      if (identity.required_deadline === 1) {
-        const currentDue = storedDueAt ? toKvantDatetime(storedDueAt) : undefined;
-        if (currentDue && slot.due_at > currentDue) {
+        if (!identity) {
           throw new Error(
-            "required_deadline=1 is a hard deadline: cannot postpone due_at later than the stored deadline. If that due_at is already past, close with kvant_tasks_done (is_done=1 or 0)."
+            "Cannot postpone: missing creator_id, to_user_id, required_deadline (and function_user_id, program_id). Copy them from kvant_tasks_list, kvant_tasks_get, or kvant_tasks_get_todo, then call this tool again. POST /actions will not raise the stored due_at by itself."
           );
         }
-      } else {
-        putResult = await kvantRequest({
-          method: "PUT",
-          path: `/tasks/${args.task_id}`,
-          body: postponePutBody(args.task_id, identity, slot.due_at),
-        });
-      }
 
-      const actionResult = await kvantRequest({
-        method: "POST",
-        path: `/tasks/${args.task_id}/actions`,
-        body: slot,
+        if (identity.required_deadline === 1) {
+          const currentDue = storedDueAt ? toKvantDatetime(storedDueAt) : undefined;
+          if (currentDue && slot.due_at > currentDue) {
+            throw new Error(
+              "required_deadline=1 is a hard deadline: cannot postpone due_at later than the stored deadline. If that due_at is already past, close with kvant_tasks_done (is_done=1 or 0)."
+            );
+          }
+        } else {
+          putResult = await kvantRequest({
+            method: "PUT",
+            path: `/tasks/${args.task_id}`,
+            body: postponePutBody(args.task_id, identity, slot.due_at),
+          });
+        }
+
+        const actionResult = await kvantRequest({
+          method: "POST",
+          path: `/tasks/${args.task_id}/actions`,
+          body: slot,
+        });
+        return { due_at_put: putResult ?? null, action: actionResult };
       });
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ due_at_put: putResult ?? null, action: actionResult }, null, 2),
-          },
-        ],
-      };
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_get_logs",
     "Get comments/work log for a communication. Use when the user asks what to do, what to sign, where files/acts are, or when description looks empty after list/todo — attachments and clarifications often live only here. Progress and news about the work also live here, not in the description. kvant_tasks_get already includes logs; call this when you only have numeric id from list/todo.",
-    { task_id: z.number().describe("Task ID") },
-    async ({ task_id }) => {
-      const result = await kvantRequest({ method: "GET", path: `/tasks/${task_id}/logs` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      task_id: z.number().describe("Task ID"),
+      ...organizationReadShape,
+    },
+    async ({ task_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: true }, async () =>
+        kvantRequest({ method: "GET", path: `/tasks/${task_id}/logs` })
+      );
+      return jsonResult(result);
     }
   );
 
@@ -833,34 +904,48 @@ export function registerTasksTools(server: McpServer) {
         .array(z.number())
         .nullable()
         .describe("Notify these user IDs, or null. Required (may be null)."),
+      ...organizationWriteShape,
     },
-    async ({ task_id, text, required, accept_comment, type, to_user_ids }) => {
-      const result = await kvantRequest({
-        method: "POST",
-        path: `/tasks/${task_id}/logs`,
-        body: { text, required, accept_comment, type, to_user_ids },
-      });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    async ({ task_id, text, required, accept_comment, type, to_user_ids, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: false }, async () =>
+        kvantRequest({
+          method: "POST",
+          path: `/tasks/${task_id}/logs`,
+          body: { text, required, accept_comment, type, to_user_ids },
+        })
+      );
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_get_checklists",
     "Get checklists for a communication",
-    { task_id: z.number().describe("Task ID") },
-    async ({ task_id }) => {
-      const result = await kvantRequest({ method: "GET", path: `/tasks/${task_id}/checklists` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      task_id: z.number().describe("Task ID"),
+      ...organizationReadShape,
+    },
+    async ({ task_id, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: true }, async () =>
+        kvantRequest({ method: "GET", path: `/tasks/${task_id}/checklists` })
+      );
+      return jsonResult(result);
     }
   );
 
   server.tool(
     "kvant_tasks_get_todo",
     "Get communications on the todo/agenda for one date (YYYY-MM-DD). Not a name search — to find a task by title use kvant_tasks_list with type my and read inputs_values.",
-    { date: z.string().describe("Date in YYYY-MM-DD format") },
-    async ({ date }) => {
-      const result = await kvantRequest({ method: "GET", path: `/tasks/todo/${date}` });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    {
+      date: z.string().describe("Date in YYYY-MM-DD format"),
+      ...organizationReadShape,
+    },
+    async ({ date, organization }) => {
+      const result = await forOrganizations(organization, { allowAll: true }, async () => {
+        const data = await kvantRequest({ method: "GET", path: `/tasks/todo/${date}` });
+        return enrichTasksWithUiUrl(data);
+      });
+      return jsonResult(result);
     }
   );
 }

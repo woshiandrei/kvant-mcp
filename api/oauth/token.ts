@@ -1,12 +1,17 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { jwtVerify } from "jose";
+import { jwtVerify, SignJWT } from "jose";
 import { createHash } from "node:crypto";
+import {
+  getOauthSecret,
+  parseSessionPayload,
+  signSessionAccessToken,
+  type SessionPayload,
+} from "../../src/session.js";
 
-function getSecret() {
-  const secret = process.env.OAUTH_SECRET;
-  if (!secret) throw new Error("OAUTH_SECRET not set");
-  return new TextEncoder().encode(secret);
-}
+type CodePayload = SessionPayload & {
+  code_challenge: string;
+  code_challenge_method: string;
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -36,30 +41,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const codeVerifier = body.code_verifier;
 
     if (!code || !codeVerifier) {
-      res.status(400).json({ error: "invalid_request", error_description: "Missing code or code_verifier" });
+      res.status(400).json({
+        error: "invalid_request",
+        error_description: "Missing code or code_verifier",
+      });
       return;
     }
 
-    let payload;
+    let payload: CodePayload;
     try {
-      const result = await jwtVerify(code, getSecret());
-      payload = result.payload as { kvant_key: string; code_challenge: string; code_challenge_method: string };
+      const result = await jwtVerify(code, getOauthSecret());
+      const session = parseSessionPayload(result.payload);
+      const challenge = result.payload.code_challenge;
+      const method = result.payload.code_challenge_method;
+      if (typeof challenge !== "string") {
+        throw new Error("Missing code_challenge");
+      }
+      payload = {
+        ...session,
+        code_challenge: challenge,
+        code_challenge_method: typeof method === "string" ? method : "S256",
+      };
     } catch {
-      res.status(400).json({ error: "invalid_grant", error_description: "Invalid or expired code" });
+      res.status(400).json({
+        error: "invalid_grant",
+        error_description: "Invalid or expired code",
+      });
       return;
     }
 
     const expectedChallenge = base64url(createHash("sha256").update(codeVerifier).digest());
     if (expectedChallenge !== payload.code_challenge) {
-      res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed" });
+      res.status(400).json({
+        error: "invalid_grant",
+        error_description: "PKCE verification failed",
+      });
       return;
     }
 
+    const session: SessionPayload = {
+      v: 1,
+      orgs: payload.orgs,
+      default_org_id: payload.default_org_id,
+    };
+
+    const accessToken = await signSessionAccessToken(session);
+    const refreshToken = await new SignJWT({
+      v: 1,
+      orgs: session.orgs,
+      default_org_id: session.default_org_id,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("365d")
+      .sign(getOauthSecret());
+
     res.json({
-      access_token: payload.kvant_key,
+      access_token: accessToken,
       token_type: "bearer",
       expires_in: 31536000,
-      refresh_token: code,
+      refresh_token: refreshToken,
     });
     return;
   }
@@ -67,21 +108,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (grantType === "refresh_token") {
     const refreshToken = body.refresh_token;
     if (!refreshToken) {
-      res.status(400).json({ error: "invalid_request", error_description: "Missing refresh_token" });
+      res.status(400).json({
+        error: "invalid_request",
+        error_description: "Missing refresh_token",
+      });
       return;
     }
 
-    let payload;
+    let session: SessionPayload;
     try {
-      const result = await jwtVerify(refreshToken, getSecret(), { clockTolerance: 31536000 });
-      payload = result.payload as { kvant_key: string };
+      const result = await jwtVerify(refreshToken, getOauthSecret(), {
+        clockTolerance: 31536000,
+      });
+      session = parseSessionPayload(result.payload);
     } catch {
-      res.status(400).json({ error: "invalid_grant", error_description: "Invalid refresh token" });
+      res.status(400).json({
+        error: "invalid_grant",
+        error_description: "Invalid refresh token",
+      });
       return;
     }
+
+    const accessToken = await signSessionAccessToken(session);
 
     res.json({
-      access_token: payload.kvant_key,
+      access_token: accessToken,
       token_type: "bearer",
       expires_in: 31536000,
       refresh_token: refreshToken,
