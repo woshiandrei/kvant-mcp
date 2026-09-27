@@ -509,14 +509,16 @@ export function registerTasksTools(server: McpServer) {
       relation_track_users: z
         .array(
           z.object({
-            id: z.number().describe("User ID to attach as a relation (not the same as list response type)."),
+            id: z.number().describe("User ID of the sender (current user) or another attached user."),
             user_type: z
               .number()
-              .describe("Seen as 1 in the create example. Meaning of other values unknown — do not infer."),
+              .describe("1 = sender (creator). Required for the sender entry. Other values unknown — do not infer."),
           })
         )
-        .optional()
-        .describe("Users to attach. Create example: [{id, user_type: 1}]. Empty/omit if none beyond defaults."),
+        .min(1)
+        .describe(
+          'Required. At least the sender: [{"id": <current user id>, "user_type": 1}]. Empty array is rejected by the API (422: value below minimum).'
+        ),
       program_id: z
         .number()
         .nullable()
@@ -525,6 +527,11 @@ export function registerTasksTools(server: McpServer) {
       ...organizationWriteShape,
     },
     async (args) => {
+      if (!args.relation_track_users.length) {
+        throw new Error(
+          'relation_track_users is required and must not be empty. Pass the sender, e.g. [{"id": <current user id>, "user_type": 1}].'
+        );
+      }
       const result = await forOrganizations(args.organization, { allowAll: false }, async () => {
         const data = await kvantRequest({
           method: "POST",
@@ -537,7 +544,7 @@ export function registerTasksTools(server: McpServer) {
             inputs_values: args.inputs_values,
             function_user_id: args.function_user_id ?? null,
             task_labels: args.task_labels ?? null,
-            relation_track_users: args.relation_track_users ?? [],
+            relation_track_users: args.relation_track_users,
             program_id: args.program_id ?? null,
           },
         });
@@ -887,7 +894,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_add_log",
-    "Add a comment to a communication. Default way to record news, progress, or any update about work on this communication — use this instead of kvant_tasks_update. All body fields are required.",
+    "Add a comment to a communication. Default way to record news, progress, or any update about work on this communication — use this instead of kvant_tasks_update. type defaults to 1 (ordinary comment); required, accept_comment, and to_user_ids are still required.",
     {
       task_id: z.number().describe("Numeric communication id (not key)."),
       text: z.string().describe("Comment text: news, progress, or a work update on this communication."),
@@ -899,7 +906,10 @@ export function registerTasksTools(server: McpServer) {
         .describe("Required. Example 0. Meaning of 1 unknown — do not infer."),
       type: z
         .number()
-        .describe("Comment type. Required. Example 0. Other values unknown — do not infer."),
+        .optional()
+        .describe(
+          "Comment type. Default 1 = ordinary comment. Do not send 0 or 5 — API returns 422 (out of range). Other values unknown — do not infer."
+        ),
       to_user_ids: z
         .array(z.number())
         .nullable()
@@ -907,11 +917,17 @@ export function registerTasksTools(server: McpServer) {
       ...organizationWriteShape,
     },
     async ({ task_id, text, required, accept_comment, type, to_user_ids, organization }) => {
+      const resolvedType = type ?? 1;
+      if (resolvedType === 0 || resolvedType === 5) {
+        throw new Error(
+          `type=${resolvedType} is rejected by the API (422 out of range). Use type=1 for an ordinary comment.`
+        );
+      }
       const result = await forOrganizations(organization, { allowAll: false }, async () =>
         kvantRequest({
           method: "POST",
           path: `/tasks/${task_id}/logs`,
-          body: { text, required, accept_comment, type, to_user_ids },
+          body: { text, required, accept_comment, type: resolvedType, to_user_ids },
         })
       );
       return jsonResult(result);
