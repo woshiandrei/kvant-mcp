@@ -1,0 +1,44 @@
+name: Notify on issue closed
+
+on:
+  issues:
+    types: [closed]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST Cursor Automations webhook
+        env:
+          ISSUE_WEBHOOK_URL: ${{ secrets.ISSUE_WEBHOOK_URL }}
+          ISSUE_WEBHOOK_TOKEN: ${{ secrets.ISSUE_WEBHOOK_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          CLOSED_BY: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -z "$ISSUE_WEBHOOK_URL" ] || [ -z "$ISSUE_WEBHOOK_TOKEN" ]; then
+            echo "Missing ISSUE_WEBHOOK_URL or ISSUE_WEBHOOK_TOKEN secret."
+            exit 1
+          fi
+
+          payload=$(jq -n \
+            --arg title "$ISSUE_TITLE" \
+            --arg url "$ISSUE_URL" \
+            --arg closed_by "$CLOSED_BY" \
+            --arg repository "$REPOSITORY" \
+            --argjson issue_number "$ISSUE_NUMBER" \
+            '{
+              text: ("Issue #" + ($issue_number | tostring) + " closed: " + $title),
+              issue_number: $issue_number,
+              issue_title: $title,
+              issue_url: $url,
+              closed_by: $closed_by,
+              repository: $repository
+            }')
+
+          curl --fail-with-body -sS -X POST "$ISSUE_WEBHOOK_URL" \
+            -H "Authorization: Bearer $ISSUE_WEBHOOK_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
