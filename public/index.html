@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kvant MCP</title>
+  <meta name="description" content="Подключите задачи и проекты Квант к Claude, ChatGPT и Cursor через MCP.">
+  <link rel="icon" href="https://static.tildacdn.com/tild6235-6161-4633-a232-313130396562/32x32.ico">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+      color: #1a1a1a;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+      border: 1px solid #e8e8e8;
+      text-align: center;
+    }
+    .logo { display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
+    .logo img { height: 32px; }
+    h1 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+    .intro {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      line-height: 1.2;
+      height: 40px;
+    }
+    .btn-primary {
+      background: #4c3898;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #3d2987; }
+    .btn-secondary {
+      background: #fff;
+      color: #1a1a1a;
+      border: 1px solid #ddd;
+    }
+    .btn-secondary:hover { background: #f7f4ff; border-color: #c4b8e8; }
+    .cursor-badge {
+      display: inline-flex;
+      line-height: 0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .cursor-badge img { height: 28px; width: auto; display: block; }
+    .url-block {
+      text-align: left;
+      background: #fafafa;
+      border: 1px solid #eee;
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .url-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #666;
+      margin-bottom: 8px;
+    }
+    .url-row {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .url-value {
+      flex: 1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #333;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      padding: 10px 12px;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .btn-copy {
+      flex-shrink: 0;
+      padding: 0 14px;
+      height: auto;
+      background: #fff;
+      color: #4c3898;
+      border: 1px solid #c4b8e8;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-copy:hover { background: #f7f4ff; }
+    .hint {
+      font-size: 12px;
+      color: #999;
+      margin-top: 16px;
+      line-height: 1.45;
+      text-align: center;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(8px);
+      background: #1a1a1a;
+      color: #fff;
+      font-size: 13px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    @media (max-width: 480px) {
+      .card { padding: 28px 20px; }
+      .actions { flex-direction: column; }
+      .btn, .cursor-badge { width: 100%; }
+      .cursor-badge { justify-content: center; }
+      .url-row { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <img src="https://static.tildacdn.com/tild3866-3831-4362-b433-633339643533/logo_kvant.svg" alt="Квант">
+    </div>
+    <h1>Kvant MCP</h1>
+    <p class="intro">Подключите задачи и проекты Квант к Claude, ChatGPT или Cursor.</p>
+
+    <div class="actions">
+      <a id="btn-claude" class="btn btn-primary" href="#" target="_blank" rel="noopener noreferrer">Add to Claude</a>
+      <button type="button" id="btn-gpt" class="btn btn-secondary">Add to ChatGPT</button>
+      <a id="btn-cursor" class="cursor-badge" href="#" rel="noopener noreferrer">
+        <img src="https://cursor.com/deeplink/mcp-install-dark.svg" alt="Add Kvant MCP server to Cursor" height="28" width="126">
+      </a>
+    </div>
+
+    <div class="url-block">
+      <div class="url-label">MCP URL</div>
+      <div class="url-row">
+        <code id="mcp-url" class="url-value"></code>
+        <button type="button" id="btn-copy" class="btn-copy">Скопировать</button>
+      </div>
+    </div>
+
+    <p class="hint">ChatGPT: Developer mode → Apps → Create → вставьте URL → OAuth.</p>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite">Скопировано</div>
+
+  <script>
+    const SERVER_NAME = 'Kvant';
+    const mcpUrl = `${window.location.origin}/api/mcp`;
+
+    const mcpUrlEl = document.getElementById('mcp-url');
+    const btnClaude = document.getElementById('btn-claude');
+    const btnGpt = document.getElementById('btn-gpt');
+    const btnCursor = document.getElementById('btn-cursor');
+    const btnCopy = document.getElementById('btn-copy');
+    const toast = document.getElementById('toast');
+
+    mcpUrlEl.textContent = mcpUrl;
+
+    btnClaude.href =
+      'https://claude.ai/customize/connectors?modal=add-custom-connector' +
+      `&connectorName=${encodeURIComponent(SERVER_NAME)}` +
+      `&connectorUrl=${encodeURIComponent(mcpUrl)}`;
+
+    const cursorConfig = btoa(JSON.stringify({ url: mcpUrl }));
+    btnCursor.href =
+      `cursor://anysphere.cursor-deeplink/mcp/install?name=${encodeURIComponent(SERVER_NAME)}` +
+      `&config=${encodeURIComponent(cursorConfig)}`;
+
+    let toastTimer;
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    async function copyMcpUrl() {
+      try {
+        await navigator.clipboard.writeText(mcpUrl);
+        showToast('Скопировано');
+        return true;
+      } catch {
+        showToast('Не удалось скопировать');
+        return false;
+      }
+    }
+
+    btnCopy.addEventListener('click', () => {
+      copyMcpUrl();
+    });
+
+    btnGpt.addEventListener('click', async () => {
+      await copyMcpUrl();
+      window.open('https://chatgpt.com/', '_blank', 'noopener,noreferrer');
+    });
+  </script>
+</body>
+</html>
