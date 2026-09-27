@@ -87,6 +87,10 @@
       height: 20px;
       flex-shrink: 0;
       display: block;
+      object-fit: contain;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
     }
     .btn-primary {
       background: #4c3898;
@@ -207,11 +211,7 @@
         Add to ChatGPT
       </button>
       <a id="btn-cursor" class="btn btn-cursor" href="#">
-        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="#fff" d="M12 2.4 21.2 7.7 12 13 2.8 7.7 12 2.4z"/>
-          <path fill="#c4c4c4" d="M2.8 9 12 14.3V21.6L2.8 16.3V9z"/>
-          <path fill="#7a7a7a" d="M21.2 9 12 14.3V21.6l9.2-5.3V9z"/>
-        </svg>
+        <img class="btn-icon" src="/cursor-mark.png" alt="" width="20" height="20" draggable="false">
         Add to Cursor
       </a>
     </div>
