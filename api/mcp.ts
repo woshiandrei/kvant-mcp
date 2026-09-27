@@ -9,14 +9,13 @@ import { registerBusinessProcessesTools } from "../src/tools/business-processes.
 import { registerReportsTools } from "../src/tools/reports.js";
 import { registerOrganizationsTools } from "../src/tools/organizations.js";
 import { parseBearerToken, runWithSession } from "../src/client.js";
+import { getPublicBaseUrl } from "../src/public-url.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const authHeader = (req.headers.authorization as string) || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
 
-  const baseUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "https://kvant-mcp.vercel.app";
+  const baseUrl = getPublicBaseUrl(req);
 
   if (!token) {
     res.setHeader(
