@@ -281,7 +281,7 @@ function renderConsentPage(
   <div class="card">
     <div class="logo"><img src="https://static.tildacdn.com/tild3866-3831-4362-b433-633339643533/logo_kvant.svg" alt="Квант"></div>
     <h1>Авторизация</h1>
-    <p class="intro">Подключите одну или несколько организаций Квант. Укажите название, домен (например rsuquant) и API-ключ. Отметьте организацию по умолчанию.</p>
+    <p class="intro">Подключите одну или несколько организаций Квант. Укажите название, домен (например mycompany) и API-ключ. Отметьте организацию по умолчанию.</p>
     <form method="POST" action="" id="consent-form">
       <input type="hidden" name="redirect_uri" value="${escapeHtml(fields.redirectUri)}">
       <input type="hidden" name="state" value="${escapeHtml(fields.state)}">
@@ -293,7 +293,7 @@ function renderConsentPage(
       <div id="orgs"></div>
       <button type="button" class="secondary" id="add-org">Добавить организацию</button>
       <button type="submit" class="primary">Подключить</button>
-      <p class="hint">Ключ: Настройки профиля → Сгенерировать API key. Домен — поддомен из адресной строки (rsuquant.kvant.app → rsuquant).</p>
+      <p class="hint">Ключ: Настройки профиля → Сгенерировать API key. Домен — поддомен из адресной строки (mycompany.kvant.app → mycompany).</p>
     </form>
   </div>
   <script>
@@ -319,11 +319,11 @@ function renderConsentPage(
           </div>
           <div class="field">
             <label>Название</label>
-            <input type="text" data-field="name" data-index="\${index}" value="\${escapeAttr(org.name)}" placeholder="Buddy Dinner" required>
+            <input type="text" data-field="name" data-index="\${index}" value="\${escapeAttr(org.name)}" placeholder="Моя Компания" required>
           </div>
           <div class="field">
             <label>Домен</label>
-            <input type="text" data-field="domain" data-index="\${index}" value="\${escapeAttr(org.domain)}" placeholder="ip-buddydinner или https://ip-buddydinner.kvant.app" required>
+            <input type="text" data-field="domain" data-index="\${index}" value="\${escapeAttr(org.domain)}" placeholder="mycompany или https://mycompany.kvant.app" required>
           </div>
           <div class="field">
             <label>API-ключ</label>
