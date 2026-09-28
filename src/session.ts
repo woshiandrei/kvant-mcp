@@ -58,7 +58,7 @@ export function normalizeSubdomain(raw: string): string {
   }
   if (!value || value.includes(".") || value === "platform" || value === "www") {
     throw new Error(
-      `Invalid Kvant subdomain "${raw}". Use e.g. rsuquant or https://rsuquant.kvant.app`
+      `Invalid Kvant subdomain "${raw}". Use e.g. mycompany or https://mycompany.kvant.app`
     );
   }
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value)) {
