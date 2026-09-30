@@ -4,7 +4,8 @@ const FALLBACK_BASE_URL = "https://mcp.kvant.app";
 
 /**
  * Public origin for OAuth metadata and WWW-Authenticate.
- * Prefer PUBLIC_BASE_URL, then the request Host, then mcp.kvant.app.
+ * Prefer PUBLIC_BASE_URL (set to https://mcp.kvant.app in Production — do not leave unset or issuer drifts with Host / *.vercel.app),
+ * then the request Host, then mcp.kvant.app.
  * Do not use VERCEL_PROJECT_PRODUCTION_URL — that stays on *.vercel.app.
  */
 export function getPublicBaseUrl(req?: VercelRequest): string {

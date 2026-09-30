@@ -33,11 +33,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     session = await parseBearerToken(token);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const detail = message.includes("OAUTH_SECRET")
+      ? "Server OAUTH_SECRET is missing or invalid — check Vercel env (do not rotate casually)."
+      : message.includes("signature") || message.includes("JWS")
+        ? "Session token signature failed — OAUTH_SECRET may have changed (forces re-auth)."
+        : message;
     res.setHeader(
       "WWW-Authenticate",
       `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`
     );
-    res.status(401).json({ error: message });
+    res.status(401).json({ error: detail });
     return;
   }
 

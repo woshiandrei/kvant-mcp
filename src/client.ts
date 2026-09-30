@@ -213,11 +213,13 @@ export function jsonResult(payload: unknown): {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
 }
 
+export type KvantQueryValue = string | number | Array<string | number> | undefined;
+
 export interface KvantRequestOptions {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   body?: unknown;
-  params?: Record<string, string | number | undefined>;
+  params?: Record<string, KvantQueryValue>;
 }
 
 export async function kvantRequest<T = unknown>(
@@ -229,7 +231,12 @@ export async function kvantRequest<T = unknown>(
   const url = new URL(`${BASE_URL}${path}`);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
+      if (value === undefined) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          url.searchParams.append(key, String(item));
+        }
+      } else {
         url.searchParams.set(key, String(value));
       }
     }

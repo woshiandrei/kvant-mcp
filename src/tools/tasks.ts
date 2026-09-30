@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   enrichTasksWithUiUrl,
   forOrganizations,
+  getActiveOrg,
   jsonResult,
   kvantRequest,
 } from "../client.js";
@@ -25,8 +26,11 @@ const TASK_RESPONSE_GUIDE =
   "ui_url is https://{subdomain}.kvant.app/tasks/show/{key} — do not invent URLs or use platform.kvant.app/openapi. " +
   "Multi-org: omit organization for the default org; pass organization name/subdomain from kvant_organizations_list; " +
   'read tools accept organization "all". ' +
+  "organization_user is the API-key owner's user profile nested on the communication/log: organization_user.organization_id is that user's home/primary organization, NOT the organization of this communication — do not use it to identify the task's org; use the organization tool argument, multi-org wrapper fields, or ui_url subdomain instead. " +
   "state_id: 1=Incoming, 2=Accepted, 3=In Progress, 4=Approve, 5=Completed; prev_state_id is the previous stage (null if never left Incoming). " +
   "List request type (my/control/track) is the list tab, not type_id. " +
+  "After MCP filtering, type=my keeps only communications where you are the performer (to_user_id), when the session knows your user_id (new OAuth) or you pass to_user_ids. " +
+  "The raw Kvant API my tab can also include meetings where you are only a calendar participant — those belong in track once filtered. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
   "function_user_id=org function/role the performer is acting in — same user can have several functions. " +
   "due_at=deadline (null if none). required_deadline=0 or null is an ordinary deadline: postpone by PUT (kvant_tasks_update or the first step inside kvant_tasks_move_action) then POST /actions for the calendar slot. POST /actions alone does not raise the stored due_at. PUT body must include id, creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id, and relation_track_users: null — do not rebuild relation_track_users from get. required_deadline=1 is the exception — a hard deadline that cannot be set later than the existing due_at; if that due_at is already past, do not take into work or reschedule, close with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
@@ -91,6 +95,44 @@ function asString(value: unknown): string | undefined {
 
 function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Performer ids for type=my post-filter: explicit to_user_ids, else session org.user_id. */
+function resolveMyPerformerFilterIds(
+  toUserIds: number[] | null | undefined
+): number[] | undefined {
+  if (Array.isArray(toUserIds) && toUserIds.length > 0) {
+    return toUserIds;
+  }
+  const sessionUserId = getActiveOrg().user_id;
+  return sessionUserId !== undefined ? [sessionUserId] : undefined;
+}
+
+function taskToUserId(item: unknown): number | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  return asFiniteNumber((item as NestedRecord).to_user_id);
+}
+
+function filterTasksByToUserIds(payload: unknown, performerIds: number[]): unknown {
+  const allowed = new Set(performerIds);
+  const keep = (item: unknown) => {
+    const id = taskToUserId(item);
+    return id !== undefined && allowed.has(id);
+  };
+
+  if (Array.isArray(payload)) {
+    return payload.filter(keep);
+  }
+  if (!payload || typeof payload !== "object") return payload;
+  const root = payload as NestedRecord;
+  const out: NestedRecord = { ...root };
+  if (Array.isArray(root.data)) {
+    out.data = root.data.filter(keep);
+  }
+  if (Array.isArray(root.tasks)) {
+    out.tasks = root.tasks.filter(keep);
+  }
+  return out;
 }
 
 function asNullableString(value: unknown): string | null | undefined {
@@ -315,7 +357,9 @@ const toWorkShape = {
 export function registerTasksTools(server: McpServer) {
   server.tool(
     "kvant_tasks_list",
-    "List communications. POST /tasks/index with a FLAT JSON body — do not wrap fields in filters. There is no search parameter: to find a task by name (e.g. акты) call type my (and control/track if needed) and read inputs_values. type selects the list tab: my (performer), control (sender), track (participant) — not type_id. No combined list: for all communications call three times. Defaults: states=[1,2,3,4,5], offset=0, limit=10. kvant_tasks_get_todo is today's agenda by date, not a name search. " +
+    "List communications. POST /tasks/index with a FLAT JSON body — do not wrap fields in filters. There is no search parameter: to find a task by name (e.g. акты) call type my (and control/track if needed) and read inputs_values. type selects the list tab: my (performer), control (sender), track (participant) — not type_id. " +
+      "For type=my the MCP post-filters to to_user_id matching the API-key owner when user_id is in the session (new OAuth consents) or when you pass to_user_ids — so meetings where you are only a participant are dropped. Older sessions without user_id keep the raw API my tab until re-consent (auth still works). " +
+      "No combined list: for all communications call three times. Defaults: states=[1,2,3,4,5], offset=0, limit=10. kvant_tasks_get_todo is today's agenda by date, not a name search. " +
       TASK_RESPONSE_GUIDE,
     {
       states: z
@@ -328,7 +372,7 @@ export function registerTasksTools(server: McpServer) {
         .enum(["my", "control", "track"])
         .optional()
         .describe(
-          'Required list tab at the TOP LEVEL (not under filters). "my" = current user is performer/recipient. "control" = current user is sender. "track" = current user is a participant (monitor only). No combined list — for all communications call three times with my, control, and track. Not for today\'s agenda — use kvant_tasks_get_todo. No search field.'
+          'Required list tab at the TOP LEVEL (not under filters). "my" = performer after MCP filter (to_user_id = you) when user_id/to_user_ids known; raw API may also return meetings where you are only a participant. "control" = sender. "track" = participant/monitor. No combined list — call three times. Not for today\'s agenda — use kvant_tasks_get_todo. No search field.'
         ),
       offset: z.number().optional().describe("Pagination offset. Default 0."),
       limit: z.number().optional().describe("Page size. Default 10."),
@@ -351,7 +395,9 @@ export function registerTasksTools(server: McpServer) {
         .array(z.number())
         .nullable()
         .optional()
-        .describe("Filter by recipient/performer user IDs. Useful with type control or track. null = no filter."),
+        .describe(
+          "Filter by recipient/performer user IDs. With type=my, MCP also post-filters to these ids (performer-only) even if the API ignores the filter. Useful with type control or track. null = no filter."
+        ),
       user_labels: z
         .array(z.union([z.string(), z.number()]))
         .nullable()
@@ -425,7 +471,14 @@ export function registerTasksTools(server: McpServer) {
             with_communication_errors,
           },
         });
-        return enrichTasksWithUiUrl(data);
+        const enriched = enrichTasksWithUiUrl(data);
+        if (type === "my") {
+          const performerIds = resolveMyPerformerFilterIds(to_user_ids);
+          if (performerIds && performerIds.length > 0) {
+            return filterTasksByToUserIds(enriched, performerIds);
+          }
+        }
+        return enriched;
       });
       return jsonResult(result);
     }

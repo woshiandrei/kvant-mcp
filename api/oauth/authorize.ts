@@ -100,12 +100,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
       }
 
+      const user_id = await resolveOwnerUserId(row.api_key);
       const id = newOrgId();
       validated.push({
         id,
         name: row.name,
         subdomain,
         api_key: row.api_key,
+        ...(user_id !== undefined ? { user_id } : {}),
       });
       if (row.is_default) {
         default_org_id = id;
@@ -217,6 +219,62 @@ async function validateKvantApiKey(apiKey: string): Promise<string | null> {
   } catch {
     return "Не удалось проверить ключ. Попробуйте ещё раз.";
   }
+}
+
+/**
+ * Best-effort: Kvant nests the API-key owner's profile as organization_user on communications.
+ * Optional — failure must not block OAuth (existing clients stay valid without user_id).
+ */
+async function resolveOwnerUserId(apiKey: string): Promise<number | undefined> {
+  try {
+    const res = await fetch("https://platform.kvant.app/openapi/tasks/index", {
+      method: "POST",
+      headers: {
+        "api-key": apiKey,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "my",
+        states: [1, 2, 3, 4, 5],
+        offset: 0,
+        limit: 1,
+        creator_user_ids: null,
+        deadline_period_start: null,
+        deadline_period_end: null,
+        to_user_ids: null,
+        user_labels: null,
+        with_communication_errors: false,
+      }),
+    });
+    if (!res.ok) return undefined;
+    const payload: unknown = await res.json();
+    return extractOrganizationUserId(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractOrganizationUserId(payload: unknown): number | undefined {
+  const items = listTaskLikeItems(payload);
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const orgUser = (item as Record<string, unknown>).organization_user;
+    if (!orgUser || typeof orgUser !== "object") continue;
+    const id = (orgUser as Record<string, unknown>).id;
+    if (typeof id === "number" && Number.isFinite(id)) return id;
+    if (typeof id === "string" && /^\d+$/.test(id)) return Number(id);
+  }
+  return undefined;
+}
+
+function listTaskLikeItems(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  if (Array.isArray(root.data)) return root.data;
+  if (Array.isArray(root.tasks)) return root.tasks;
+  return [];
 }
 
 function renderConsentPage(

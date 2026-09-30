@@ -7,6 +7,8 @@ export type OrgConfig = {
   name: string;
   subdomain: string;
   api_key: string;
+  /** Optional Kvant user id of the API-key owner. Absent on older JWTs — do not require re-auth. */
+  user_id?: number;
 };
 
 export type SessionPayload = {
@@ -33,6 +35,11 @@ export const organizationWriteShape = {
   organization: z.string().optional().describe(ORGANIZATION_WRITE_PARAM_DESC),
 };
 
+/**
+ * Signing secret for OAuth JWTs (access, refresh, auth codes).
+ * Must be a stable Vercel env var — never rotate on ordinary deploys (rotation forces every client to re-auth).
+ * Also set PUBLIC_BASE_URL=https://mcp.kvant.app so issuer/resource metadata does not drift with Host.
+ */
 export function getOauthSecret(): Uint8Array {
   const secret = process.env.OAUTH_SECRET;
   if (!secret) throw new Error("OAUTH_SECRET not set");
@@ -142,7 +149,10 @@ export function parseSessionPayload(payload: unknown): SessionPayload {
     if (!id || !name || !api_key) {
       throw new Error(`Incomplete organization at index ${index}`);
     }
-    return { id, name, subdomain, api_key };
+    const user_id = asOptionalUserId(org.user_id);
+    return user_id !== undefined
+      ? { id, name, subdomain, api_key, user_id }
+      : { id, name, subdomain, api_key };
   });
   const default_org_id =
     typeof root.default_org_id === "string" ? root.default_org_id : "";
@@ -152,6 +162,13 @@ export function parseSessionPayload(payload: unknown): SessionPayload {
   return { v: 1, orgs, default_org_id };
 }
 
+function asOptionalUserId(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value.trim());
+  return undefined;
+}
+
+/** Build a single-org session from a legacy pre-multi-org token payload field. */
 export function legacySessionFromApiKey(apiKey: string): Session {
   const id = "legacy";
   return {
@@ -169,6 +186,25 @@ export function legacySessionFromApiKey(apiKey: string): Session {
 }
 
 /**
+ * Parse a verified JWT payload into a session.
+ * Supports current multi-org (`v:1` + orgs) and legacy `{ kvant_key }` refresh/code payloads.
+ */
+export function sessionFromJwtPayload(payload: unknown): SessionPayload {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid session token payload");
+  }
+  const root = payload as Record<string, unknown>;
+  if (root.v === 1) {
+    return parseSessionPayload(payload);
+  }
+  const kvantKey = typeof root.kvant_key === "string" ? root.kvant_key.trim() : "";
+  if (kvantKey) {
+    return legacySessionFromApiKey(kvantKey);
+  }
+  throw new Error("Unsupported session token payload");
+}
+
+/**
  * Parse Authorization Bearer: multi-org JWT session, or legacy raw Kvant API key.
  */
 export async function parseBearerToken(token: string): Promise<Session> {
@@ -179,7 +215,8 @@ export async function parseBearerToken(token: string): Promise<Session> {
 
   if (looksLikeJwt(trimmed) && process.env.OAUTH_SECRET) {
     try {
-      return await verifySessionAccessToken(trimmed);
+      const { payload } = await jwtVerify(trimmed, getOauthSecret());
+      return sessionFromJwtPayload(payload);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Invalid session token: ${message}`);
