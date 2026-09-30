@@ -319,9 +319,14 @@ export default function App() {
             <AlertDescription>
               <ol className="mt-2 flex list-decimal flex-col gap-2 pl-4">
                 <li>
-                  В Кванте откройте{" "}
-                  <strong>Настройки профиля → Сгенерировать API key</strong> и
-                  скопируйте ключ
+                  В Кванте наведите на свой профиль и кликните по нему
+                </li>
+                <li>
+                  Откройте вкладку <strong>«Настройки»</strong>
+                </li>
+                <li>
+                  Пролистайте вниз до блока <strong>«Ключи API»</strong> и
+                  нажмите <strong>«Добавить»</strong> — скопируйте ключ
                 </li>
                 <li>
                   Домен — часть адреса до{" "}
