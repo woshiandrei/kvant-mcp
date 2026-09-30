@@ -165,10 +165,6 @@ export default function App() {
             <h2 id="connect-heading" className="text-xl font-semibold tracking-tight">
               Как подключить
             </h2>
-            <p className="text-sm text-muted-foreground">
-              Выберите, чем пользуетесь. Claude и Cursor — одной кнопкой, ChatGPT —
-              за пару шагов вручную.
-            </p>
           </div>
 
           <Tabs defaultValue="claude">
