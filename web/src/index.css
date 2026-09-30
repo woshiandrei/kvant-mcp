@@ -97,7 +97,5 @@
 }
 
 .page-bg {
-  background:
-    radial-gradient(900px 420px at 50% -140px, oklch(0.42 0.14 290 / 0.06), transparent 55%),
-    #f6f6f7;
+  background: #f5f5f6;
 }
