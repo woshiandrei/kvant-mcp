@@ -70,40 +70,40 @@ async function copyText(value: string) {
 const CAPABILITIES = [
   {
     icon: ListTodoIcon,
-    title: "Задачи и коммуникации",
-    text: "Списки, создание, статусы, комментарии, дедлайны и встречи.",
+    title: "Задачи",
+    text: "Смотреть список, создавать новые, менять сроки, писать комментарии.",
   },
   {
     icon: FolderKanbanIcon,
-    title: "Проекты и шаблоны",
-    text: "Список проектов, создание из шаблона, добавление задач.",
+    title: "Проекты",
+    text: "Открывать проекты, создавать по шаблону, добавлять в них задачи.",
   },
   {
     icon: UsersIcon,
     title: "Сотрудники",
-    text: "Кто в организации и какие у них функции.",
+    text: "Кто работает в компании и за что отвечает.",
   },
   {
     icon: ChartColumnIcon,
     title: "Отчёты",
-    text: "Отчёт по задачам с фильтрами по проекту и типу.",
+    text: "Сводки по задачам — например, по проекту или типу.",
   },
   {
     icon: WorkflowIcon,
     title: "Бизнес-процессы",
-    text: "Список процессов и запуск нужного сценария.",
+    text: "Запускать готовые сценарии работы в Кванте.",
   },
 ] as const
 
-function McpUrlField({ mcpUrl }: { mcpUrl: string }) {
+function ConnectUrlField({ url }: { url: string }) {
   const [copied, setCopied] = useState(false)
 
   return (
     <InputGroup className="h-10 bg-background">
       <InputGroupInput
         readOnly
-        value={mcpUrl}
-        aria-label="MCP URL"
+        value={url}
+        aria-label="Адрес для подключения"
         className="font-mono text-xs sm:text-sm"
         onFocus={(e) => e.currentTarget.select()}
       />
@@ -113,7 +113,7 @@ function McpUrlField({ mcpUrl }: { mcpUrl: string }) {
           variant="secondary"
           size="sm"
           onClick={async () => {
-            const ok = await copyText(mcpUrl)
+            const ok = await copyText(url)
             if (ok) {
               setCopied(true)
               window.setTimeout(() => setCopied(false), 1600)
@@ -129,23 +129,23 @@ function McpUrlField({ mcpUrl }: { mcpUrl: string }) {
 }
 
 export default function App() {
-  const mcpUrl = useMemo(() => `${window.location.origin}/api/mcp`, [])
+  const connectUrl = useMemo(() => `${window.location.origin}/api/mcp`, [])
 
   const claudeHref = useMemo(
     () =>
       "https://claude.ai/customize/connectors?modal=add-custom-connector" +
       `&connectorName=${encodeURIComponent(SERVER_NAME)}` +
-      `&connectorUrl=${encodeURIComponent(mcpUrl)}`,
-    [mcpUrl]
+      `&connectorUrl=${encodeURIComponent(connectUrl)}`,
+    [connectUrl]
   )
 
   const cursorHref = useMemo(() => {
-    const config = btoa(JSON.stringify({ url: mcpUrl }))
+    const config = btoa(JSON.stringify({ url: connectUrl }))
     return (
       `cursor://anysphere.cursor-deeplink/mcp/install?name=${encodeURIComponent(SERVER_NAME)}` +
       `&config=${encodeURIComponent(config)}`
     )
-  }, [mcpUrl])
+  }, [connectUrl])
 
   return (
     <div className="page-bg min-h-svh">
@@ -155,11 +155,11 @@ export default function App() {
           <img src={KVANT_LOGO} alt="Квант" className="h-7 w-auto" />
           <div className="flex flex-col gap-3">
             <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-              Kvant MCP
+              Квант в Claude, ChatGPT и Cursor
             </h1>
             <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-              Подключите задачи и проекты Кванта к Claude, ChatGPT, Cursor или
-              любому другому клиенту с MCP — и управляйте работой обычным языком.
+              Подключите Квант к своему ассистенту — и просите его про задачи и
+              проекты так же, как попросили бы коллегу в чате.
             </p>
           </div>
         </header>
@@ -167,11 +167,11 @@ export default function App() {
         <section className="flex flex-col gap-4" aria-labelledby="connect-heading">
           <div className="flex flex-col gap-1">
             <h2 id="connect-heading" className="text-xl font-semibold tracking-tight">
-              Подключение
+              Как подключить
             </h2>
             <p className="text-sm text-muted-foreground">
-              Выберите клиент. Claude и Cursor подключаются в один клик; для
-              ChatGPT — короткая инструкция.
+              Выберите, чем пользуетесь. Claude и Cursor — одной кнопкой, ChatGPT —
+              за пару шагов вручную.
             </p>
           </div>
 
@@ -194,17 +194,17 @@ export default function App() {
             <TabsContent value="claude" className="mt-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Add to Claude</CardTitle>
+                  <CardTitle>Подключить Claude</CardTitle>
                   <CardDescription>
-                    Откроется Claude с формой кастомного коннектора. Имя и URL
-                    уже подставлены — подтвердите и пройдите OAuth.
+                    Нажмите кнопку — откроется Claude, всё уже заполнено. Останется
+                    подтвердить и войти в Квант.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Button asChild size="lg" className="w-full sm:w-auto">
                     <a href={claudeHref} target="_blank" rel="noopener noreferrer">
                       <ClaudeIcon data-icon="inline-start" />
-                      Add to Claude
+                      Добавить в Claude
                     </a>
                   </Button>
                 </CardContent>
@@ -214,10 +214,10 @@ export default function App() {
             <TabsContent value="cursor" className="mt-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Add to Cursor</CardTitle>
+                  <CardTitle>Подключить Cursor</CardTitle>
                   <CardDescription>
-                    Deeplink установит MCP-сервер Kvant в Cursor. Если браузер
-                    спросит разрешение — разрешите открыть Cursor.
+                    Нажмите кнопку — откроется Cursor и предложит добавить Квант.
+                    Если браузер спросит разрешение — разрешите.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -235,7 +235,7 @@ export default function App() {
                         data-icon="inline-start"
                         className="size-4"
                       />
-                      Add to Cursor
+                      Добавить в Cursor
                     </a>
                   </Button>
                 </CardContent>
@@ -245,10 +245,9 @@ export default function App() {
             <TabsContent value="chatgpt" className="mt-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Подключить в ChatGPT</CardTitle>
+                  <CardTitle>Подключить ChatGPT</CardTitle>
                   <CardDescription>
-                    Одной кнопки нет — добавьте плагин вручную. В английском
-                    интерфейсе: Developer mode → Apps → Create.
+                    Здесь нет одной кнопки — добавьте Квант через плагины.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-5">
@@ -260,7 +259,7 @@ export default function App() {
                       <div className="flex flex-col gap-1">
                         <p className="font-medium">Откройте «Плагины»</p>
                         <p className="text-sm text-muted-foreground">
-                          В ChatGPT перейдите в раздел плагинов / Apps.
+                          В ChatGPT зайдите в раздел «Плагины».
                         </p>
                       </div>
                     </li>
@@ -269,9 +268,9 @@ export default function App() {
                         2
                       </Badge>
                       <div className="flex flex-col gap-1">
-                        <p className="font-medium">Нажмите «Создать плагин»</p>
+                        <p className="font-medium">Нажмите «+»</p>
                         <p className="text-sm text-muted-foreground">
-                          Create / Create plugin — добавление своего MCP-сервера.
+                          Кнопка «+» рядом с плагинами — добавить новый.
                         </p>
                       </div>
                     </li>
@@ -280,8 +279,8 @@ export default function App() {
                         3
                       </Badge>
                       <div className="flex w-full min-w-0 flex-col gap-2">
-                        <p className="font-medium">Вставьте MCP URL</p>
-                        <McpUrlField mcpUrl={mcpUrl} />
+                        <p className="font-medium">Вставьте адрес ниже</p>
+                        <ConnectUrlField url={connectUrl} />
                       </div>
                     </li>
                     <li className="flex gap-3">
@@ -289,10 +288,10 @@ export default function App() {
                         4
                       </Badge>
                       <div className="flex flex-col gap-1">
-                        <p className="font-medium">Пройдите авторизацию</p>
+                        <p className="font-medium">Войдите в Квант</p>
                         <p className="text-sm text-muted-foreground">
-                          Откроется форма согласия Кванта — введите API key и
-                          домен организации (см. ниже).
+                          Откроется окно входа — понадобятся ключ и домен компании
+                          (как получить — в следующем блоке).
                         </p>
                       </div>
                     </li>
@@ -303,8 +302,10 @@ export default function App() {
           </Tabs>
 
           <div className="flex flex-col gap-2 pt-2">
-            <p className="text-sm font-medium text-muted-foreground">MCP URL</p>
-            <McpUrlField mcpUrl={mcpUrl} />
+            <p className="text-sm font-medium text-muted-foreground">
+              Адрес для подключения
+            </p>
+            <ConnectUrlField url={connectUrl} />
           </div>
         </section>
 
@@ -313,10 +314,10 @@ export default function App() {
         <section className="flex flex-col gap-4" aria-labelledby="auth-heading">
           <div className="flex flex-col gap-1">
             <h2 id="auth-heading" className="text-xl font-semibold tracking-tight">
-              Авторизация
+              Вход в Квант
             </h2>
             <p className="text-sm text-muted-foreground">
-              После подключения клиента Квант попросит данные организации.
+              После подключения ассистент попросит данные вашей компании.
             </p>
           </div>
 
@@ -326,19 +327,27 @@ export default function App() {
             <AlertDescription>
               <ol className="mt-2 flex list-decimal flex-col gap-2 pl-4">
                 <li>
-                  В Кванте: <strong>Настройки профиля → Сгенерировать API key</strong>
+                  В Кванте откройте{" "}
+                  <strong>Настройки профиля → Сгенерировать API key</strong> и
+                  скопируйте ключ
                 </li>
                 <li>
-                  Домен — поддомен из адресной строки:{" "}
+                  Домен — часть адреса до{" "}
+                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                    .kvant.app
+                  </code>
+                  . Например, из{" "}
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                     mycompany.kvant.app
                   </code>{" "}
-                  →{" "}
+                  берите{" "}
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                     mycompany
                   </code>
                 </li>
-                <li>На форме согласия укажите название организации, домен и ключ</li>
+                <li>
+                  В окне входа укажите название компании, этот домен и ключ
+                </li>
               </ol>
             </AlertDescription>
           </Alert>
@@ -349,11 +358,11 @@ export default function App() {
         <section className="flex flex-col gap-4" aria-labelledby="caps-heading">
           <div className="flex flex-col gap-1">
             <h2 id="caps-heading" className="text-xl font-semibold tracking-tight">
-              Что умеет MCP
+              Что можно попросить
             </h2>
             <p className="text-sm text-muted-foreground">
-              После подключения пишите ассистенту обычным языком — например:
-              «покажи мои задачи на сегодня».
+              После подключения пишите ассистенту, как коллеге. Например: «покажи
+              мои задачи на сегодня».
             </p>
           </div>
 
@@ -373,15 +382,14 @@ export default function App() {
             <InfoIcon />
             <AlertTitle>Подсказка</AlertTitle>
             <AlertDescription>
-              Не нужно запоминать названия инструментов. Спросите, как спросили
-              бы коллегу: «создай задачу Ивану на пятницу» или «какие проекты у
-              нас есть».
+              Не нужно учить команды. Спросите просто: «создай задачу Ивану на
+              пятницу» или «какие у нас проекты».
             </AlertDescription>
           </Alert>
         </section>
 
         <footer className="pb-4 text-sm text-muted-foreground">
-          Kvant MCP ·{" "}
+          Квант ·{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href="https://kvant.app"
