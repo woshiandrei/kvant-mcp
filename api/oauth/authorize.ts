@@ -315,8 +315,8 @@ function renderConsentPage(
     h1 { font-size: 20px; margin-bottom: 8px; color: #1a1a1a; text-align: center; }
     .intro { font-size: 14px; color: #666; margin-bottom: 24px; line-height: 1.5; text-align: center; }
     label { font-size: 13px; font-weight: 500; color: #333; display: block; margin-bottom: 6px; }
-    input[type="text"], input[type="password"] { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; font-size: 14px; background: #fafafa; color: #1a1a1a; }
-    input[type="password"] { font-family: monospace; }
+    input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; font-size: 14px; background: #fafafa; color: #1a1a1a; }
+    input.api-key { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     input:focus { outline: none; border-color: #4c3898; box-shadow: 0 0 0 3px rgba(76,56,152,0.12); }
     button.primary { width: 100%; padding: 12px; background: #4c3898; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 500; cursor: pointer; margin-top: 16px; transition: background 0.15s; }
     button.primary:hover { background: #3d2987; }
@@ -340,7 +340,7 @@ function renderConsentPage(
     <div class="logo"><img src="https://static.tildacdn.com/tild3866-3831-4362-b433-633339643533/logo_kvant.svg" alt="Квант"></div>
     <h1>Авторизация</h1>
     <p class="intro">Подключите одну или несколько организаций Квант. Укажите название, домен (например mycompany) и API-ключ. Отметьте организацию по умолчанию.</p>
-    <form method="POST" action="" id="consent-form">
+    <form method="POST" action="" id="consent-form" autocomplete="off">
       <input type="hidden" name="redirect_uri" value="${escapeHtml(fields.redirectUri)}">
       <input type="hidden" name="state" value="${escapeHtml(fields.state)}">
       <input type="hidden" name="code_challenge" value="${escapeHtml(fields.codeChallenge)}">
@@ -385,7 +385,7 @@ function renderConsentPage(
           </div>
           <div class="field">
             <label>API-ключ</label>
-            <input type="password" data-field="api_key" data-index="\${index}" value="\${escapeAttr(org.api_key)}" placeholder="Вставьте ключ" required autocomplete="off">
+            <input type="text" class="api-key" data-field="api_key" data-index="\${index}" value="\${escapeAttr(org.api_key)}" placeholder="Вставьте ключ" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-form-type="other">
           </div>
           <label class="default-row">
             <input type="radio" name="default_org" data-index="\${index}" \${org.is_default ? 'checked' : ''}>
