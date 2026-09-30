@@ -155,7 +155,7 @@ export default function App() {
           <img src={KVANT_LOGO} alt="Квант" className="h-7 w-auto" />
           <div className="flex flex-col gap-3">
             <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-              Квант в Claude, ChatGPT и Cursor
+              Kvant MCP для ИИ агентов
             </h1>
           </div>
         </header>
