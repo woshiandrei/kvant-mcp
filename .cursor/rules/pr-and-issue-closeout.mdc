@@ -1,0 +1,16 @@
+---
+description: After bug/feature work — PR, then close issues and delete branch on confirm/merge
+alwaysApply: true
+---
+
+# PR and issue closeout
+
+After finishing implementation work (bugs, features, planned fixes):
+
+1. **Always open a PR** — create a branch, commit, push, and `gh pr create`. Do not leave finished work only on local `main`.
+2. In the PR body, link related issues (`Fixes #N` / `Closes #N` when the PR fully resolves them).
+3. **When the user confirms / after the PR is merged:**
+   - Ensure linked issues are closed (GitHub auto-close via `Fixes`/`Closes`, or close manually if needed).
+   - Delete the remote feature branch (`git push origin --delete <branch>` / `gh pr view --json headRefName` then delete).
+   - Switch local checkout back to `main` and pull if still on the feature branch.
+4. Do not force-push to `main`/`master`. Do not delete `main`.

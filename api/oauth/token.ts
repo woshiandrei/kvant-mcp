@@ -3,7 +3,7 @@ import { jwtVerify, SignJWT } from "jose";
 import { createHash } from "node:crypto";
 import {
   getOauthSecret,
-  parseSessionPayload,
+  sessionFromJwtPayload,
   signSessionAccessToken,
   type SessionPayload,
 } from "../../src/session.js";
@@ -51,7 +51,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let payload: CodePayload;
     try {
       const result = await jwtVerify(code, getOauthSecret());
-      const session = parseSessionPayload(result.payload);
+      // Additive: v:1 multi-org codes and legacy { kvant_key } codes both work.
+      const session = sessionFromJwtPayload(result.payload);
       const challenge = result.payload.code_challenge;
       const method = result.payload.code_challenge_method;
       if (typeof challenge !== "string") {
@@ -85,23 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       default_org_id: payload.default_org_id,
     };
 
-    const accessToken = await signSessionAccessToken(session);
-    const refreshToken = await new SignJWT({
-      v: 1,
-      orgs: session.orgs,
-      default_org_id: session.default_org_id,
-    })
-      .setProtectedHeader({ alg: "HS256" })
-      .setIssuedAt()
-      .setExpirationTime("365d")
-      .sign(getOauthSecret());
-
-    res.json({
-      access_token: accessToken,
-      token_type: "bearer",
-      expires_in: 31536000,
-      refresh_token: refreshToken,
-    });
+    res.json(await issueTokens(session));
     return;
   }
 
@@ -116,11 +101,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     let session: SessionPayload;
+    let isLegacyKvantKey = false;
     try {
       const result = await jwtVerify(refreshToken, getOauthSecret(), {
         clockTolerance: 31536000,
       });
-      session = parseSessionPayload(result.payload);
+      const root = result.payload as Record<string, unknown>;
+      isLegacyKvantKey = root.v !== 1 && typeof root.kvant_key === "string";
+      // Additive: current v:1 refresh unchanged; legacy kvant_key JWT migrates to session JWT.
+      session = sessionFromJwtPayload(result.payload);
     } catch {
       res.status(400).json({
         error: "invalid_grant",
@@ -131,6 +120,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const accessToken = await signSessionAccessToken(session);
 
+    if (isLegacyKvantKey) {
+      // Upgrade legacy clients to v:1 refresh so the next refresh uses the multi-org path.
+      res.json(await issueTokens(session));
+      return;
+    }
+
+    // Existing multi-org clients: same refresh_token string as before (no forced rotation).
     res.json({
       access_token: accessToken,
       token_type: "bearer",
@@ -141,6 +137,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.status(400).json({ error: "unsupported_grant_type" });
+}
+
+async function issueTokens(session: SessionPayload): Promise<{
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  refresh_token: string;
+}> {
+  const accessToken = await signSessionAccessToken(session);
+  const refreshToken = await new SignJWT({
+    v: 1,
+    orgs: session.orgs,
+    default_org_id: session.default_org_id,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("365d")
+    .sign(getOauthSecret());
+
+  return {
+    access_token: accessToken,
+    token_type: "bearer",
+    expires_in: 31536000,
+    refresh_token: refreshToken,
+  };
 }
 
 function base64url(buffer: Buffer): string {
