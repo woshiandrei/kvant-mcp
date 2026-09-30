@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/index.ts"
+    "build": "npm run build -w web",
+    "dev": "tsx src/index.ts",
+    "dev:web": "npm run dev -w web"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
