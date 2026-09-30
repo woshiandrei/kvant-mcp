@@ -157,10 +157,6 @@ export default function App() {
             <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
               Квант в Claude, ChatGPT и Cursor
             </h1>
-            <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-              Подключите Квант к своему ассистенту — и просите его про задачи и
-              проекты так же, как попросили бы коллегу в чате.
-            </p>
           </div>
         </header>
 
