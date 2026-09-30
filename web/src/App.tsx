@@ -168,16 +168,16 @@ export default function App() {
           </div>
 
           <Tabs defaultValue="claude">
-            <TabsList className="h-auto w-full flex-wrap justify-start gap-1 p-1">
-              <TabsTrigger value="claude" className="gap-1.5 px-3 py-1.5">
+            <TabsList className="!h-11 h-11 w-full flex-wrap justify-start gap-1 p-1">
+              <TabsTrigger value="claude" className="h-9 gap-1.5 px-3 py-2">
                 <ClaudeIcon />
                 Claude
               </TabsTrigger>
-              <TabsTrigger value="cursor" className="gap-1.5 px-3 py-1.5">
+              <TabsTrigger value="cursor" className="h-9 gap-1.5 px-3 py-2">
                 <img src="/cursor-mark.png" alt="" width={16} height={16} className="size-4" />
                 Cursor
               </TabsTrigger>
-              <TabsTrigger value="chatgpt" className="gap-1.5 px-3 py-1.5">
+              <TabsTrigger value="chatgpt" className="h-9 gap-1.5 px-3 py-2">
                 <ChatGptIcon />
                 ChatGPT
               </TabsTrigger>
