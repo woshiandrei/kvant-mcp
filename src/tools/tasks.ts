@@ -6,6 +6,7 @@ import {
   jsonResult,
   kvantRequest,
 } from "../client.js";
+import { alignTaskGetPayload } from "../last-done-at.js";
 import { filterMyTaskList } from "./my-task-filter.js";
 import {
   organizationReadShape,
@@ -43,6 +44,7 @@ const TASK_RESPONSE_GUIDE =
   "task_actions are calendar slots (meetings: date, end_date, include_to_calendar); empty when unused. " +
   "relation_track_users.type 1=sender (creator), not the performer; type 2=additional participant/observer. On a meeting in type=my, type 2 is going/not-going (mcp_role=meeting_invite). user_type unknown. " +
   "Dates in responses often look like 2026-08-24 12:00:00+03. When writing date/end_date/due_at, send YYYY-MM-DD HH:mm:ss with no T and no timezone (2026-08-24 12:00:00). Raise due_at with PUT first if the new slot is later than the stored deadline; the slot (date and end_date) cannot be later than the stored due_at. " +
+  "last_done_at is the performer completion time, the same moment as the task_log_completed / «Выполнено» log. The upstream API can shift last_done_at by the gap between +03 and the completer's own timezone. kvant_tasks_get rewrites a non-null last_done_at from that log's created_at when the log is present. kvant_tasks_list and kvant_tasks_get_todo do not include the work log, so their last_done_at stays the upstream value. A missing completion log leaves last_done_at unchanged. " +
   "Flags 0/1: is_canceled, is_active. is_done answers whether the expected result (communication_result) was achieved: 1=yes, 0=closed without achieving it (closing is still allowed). " +
   "program_id=project; business_process and business_process_action_queue_id link a process; mass_task_id=bulk-created group. " +
   "UI sort only: position, position_control, section_position_id. " +
@@ -451,6 +453,7 @@ export function registerTasksTools(server: McpServer) {
   server.tool(
     "kvant_tasks_get",
     "Get a communication by string key (not numeric id). Also loads the work log (comments): response is { communication, logs }. Read logs for files, acts, links, and clarifications — empty description does not mean no details. " +
+      "When the completion log is present, last_done_at is set from that log's created_at so a timezone-shifted upstream value matches the «Выполнено» moment. If that log is missing, the upstream last_done_at is kept. " +
       TASK_RESPONSE_GUIDE,
     {
       task_key: z.string().describe("Communication key from the list/get response (field key), not numeric id."),
@@ -476,7 +479,7 @@ export function registerTasksTools(server: McpServer) {
           logs_error !== undefined
             ? { communication, logs, logs_error }
             : { communication, logs };
-        return enrichTasksWithUiUrl(payload);
+        return enrichTasksWithUiUrl(alignTaskGetPayload(payload));
       });
       return jsonResult(result);
     }
@@ -968,7 +971,7 @@ export function registerTasksTools(server: McpServer) {
 
   server.tool(
     "kvant_tasks_get_todo",
-    "Get communications on the todo/agenda for one date (YYYY-MM-DD). Not a name search — to find a task by title use kvant_tasks_list with type my and read inputs_values.",
+    "Get communications on the todo/agenda for one date (YYYY-MM-DD). Not a name search — to find a task by title use kvant_tasks_list with type my and read inputs_values. last_done_at here is the upstream value and can be shifted by the completer's timezone; kvant_tasks_get realigns it from the completion log.",
     {
       date: z.string().describe("Date in YYYY-MM-DD format"),
       ...organizationReadShape,
