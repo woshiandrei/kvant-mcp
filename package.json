@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "build": "npm run build -w web",
+    "test": "tsc --noEmit && tsx scripts/auth-regression.ts && tsx scripts/tasks-my-filter-regression.ts",
     "dev": "tsx src/index.ts",
     "dev:web": "npm run dev -w web"
   },
