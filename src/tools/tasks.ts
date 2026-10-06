@@ -7,6 +7,7 @@ import {
   kvantRequest,
 } from "../client.js";
 import { alignTaskGetPayload } from "../last-done-at.js";
+import { filterMyTaskList } from "./my-task-filter.js";
 import {
   organizationReadShape,
   organizationWriteShape,
@@ -27,11 +28,12 @@ const TASK_RESPONSE_GUIDE =
   "ui_url is https://{subdomain}.kvant.app/tasks/show/{key} — do not invent URLs or use platform.kvant.app/openapi. " +
   "Multi-org: omit organization for the default org; pass organization name/subdomain from kvant_organizations_list; " +
   'read tools accept organization "all". ' +
-  "organization_user is the API-key owner's user profile nested on the communication/log: organization_user.organization_id is that user's home/primary organization, NOT the organization of this communication — do not use it to identify the task's org; use the organization tool argument, multi-org wrapper fields, or ui_url subdomain instead. " +
+  "organization_user is a user profile nested on the communication/log: organization_user.organization_id is that user's home/primary organization, NOT the organization of this communication — do not use it to identify the task's org; use the organization tool argument, multi-org wrapper fields, or ui_url subdomain instead. organization_user.id is the membership row; organization_user.user_id matches to_user_id. List rows often omit organization_user. " +
   "state_id: 1=Incoming, 2=Accepted, 3=In Progress, 4=Approve, 5=Completed; prev_state_id is the previous stage (null if never left Incoming). " +
   "List request type (my/control/track) is the list tab, not type_id. " +
-  "After MCP filtering, type=my keeps only communications where you are the performer (to_user_id), when the session knows your user_id (new OAuth) or you pass to_user_ids. " +
-  "The raw Kvant API my tab can also include meetings where you are only a calendar participant — those belong in track once filtered. " +
+  "After MCP filtering, type=my keeps communications you owe an action on, and adds mcp_role (MCP-only, not an upstream field). " +
+  "mcp_role=performer: you are to_user_id (own task/meeting). mcp_role=meeting_invite: type_id 13 and you are a calendar participant (relation_track_users type 2); Kvant puts these in my because they require going/not-going (иду/не иду) — they are not performer work and they are not the track tab. There is no MCP tool for that RSVP. For own work or SLA, keep only mcp_role=performer. mcp_role=unknown: viewer id could not be determined; inspect to_user_id and relation_track_users. " +
+  "The viewer is session user_id when that id appears on the page as to_user_id or relation_track_users.user_id; otherwise the shared to_user_id of the non-meeting rows. Explicit to_user_ids still selects performers only. The API applies limit before this filter, so a page can be shorter than limit. " +
   "creator_id=sender, to_user_id=performer (equal when self-assigned), first_creator_id=original sender. " +
   "function_user_id=org function/role the performer is acting in — same user can have several functions. " +
   "due_at=deadline (null if none). required_deadline=0 or null is an ordinary deadline: postpone by PUT (kvant_tasks_update or the first step inside kvant_tasks_move_action) then POST /actions for the calendar slot. POST /actions alone does not raise the stored due_at. PUT body must include id, creator_id, to_user_id, required_deadline, due_at, function_user_id, program_id, and relation_track_users: null — do not rebuild relation_track_users from get. required_deadline=1 is the exception — a hard deadline that cannot be set later than the existing due_at; if that due_at is already past, do not take into work or reschedule, close with kvant_tasks_done (is_done=1 if the expected result was achieved, 0 if not). The performer may take into work or reschedule only their own communications (they are to_user_id; list tab my); others and track are not movable. After Accepted or In Progress, cancel/take_back/delete is not allowed — close with kvant_tasks_done (including is_done=0). Delete only communications you created (you are creator_id). Not every communication is editable by the current user (track is monitor-only; sender vs performer have different actions). " +
@@ -40,7 +42,7 @@ const TASK_RESPONSE_GUIDE =
   "repeat_task_id set when spawned from a recurring template. " +
   "proof is an object when evidence is required (else null): type 1=text (min_requirement=min chars); screenshot/image seen as type 2; other kinds include link, photo, file (remaining numeric map unknown). check_description=verification criteria. " +
   "task_actions are calendar slots (meetings: date, end_date, include_to_calendar); empty when unused. " +
-  "relation_track_users.type 1=sender (creator), not the performer; type 2=additional participant/observer. user_type unknown. " +
+  "relation_track_users.type 1=sender (creator), not the performer; type 2=additional participant/observer. On a meeting in type=my, type 2 is going/not-going (mcp_role=meeting_invite). user_type unknown. " +
   "Dates in responses often look like 2026-08-24 12:00:00+03. When writing date/end_date/due_at, send YYYY-MM-DD HH:mm:ss with no T and no timezone (2026-08-24 12:00:00). Raise due_at with PUT first if the new slot is later than the stored deadline; the slot (date and end_date) cannot be later than the stored due_at. " +
   "last_done_at is the performer completion time, the same moment as the task_log_completed / «Выполнено» log. The upstream API can shift last_done_at by the gap between +03 and the completer's own timezone. kvant_tasks_get rewrites a non-null last_done_at from that log's created_at when the log is present. kvant_tasks_list and kvant_tasks_get_todo do not include the work log, so their last_done_at stays the upstream value. A missing completion log leaves last_done_at unchanged. " +
   "Flags 0/1: is_canceled, is_active. is_done answers whether the expected result (communication_result) was achieved: 1=yes, 0=closed without achieving it (closing is still allowed). " +
@@ -97,44 +99,6 @@ function asString(value: unknown): string | undefined {
 
 function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/** Performer ids for type=my post-filter: explicit to_user_ids, else session org.user_id. */
-function resolveMyPerformerFilterIds(
-  toUserIds: number[] | null | undefined
-): number[] | undefined {
-  if (Array.isArray(toUserIds) && toUserIds.length > 0) {
-    return toUserIds;
-  }
-  const sessionUserId = getActiveOrg().user_id;
-  return sessionUserId !== undefined ? [sessionUserId] : undefined;
-}
-
-function taskToUserId(item: unknown): number | undefined {
-  if (!item || typeof item !== "object") return undefined;
-  return asFiniteNumber((item as NestedRecord).to_user_id);
-}
-
-function filterTasksByToUserIds(payload: unknown, performerIds: number[]): unknown {
-  const allowed = new Set(performerIds);
-  const keep = (item: unknown) => {
-    const id = taskToUserId(item);
-    return id !== undefined && allowed.has(id);
-  };
-
-  if (Array.isArray(payload)) {
-    return payload.filter(keep);
-  }
-  if (!payload || typeof payload !== "object") return payload;
-  const root = payload as NestedRecord;
-  const out: NestedRecord = { ...root };
-  if (Array.isArray(root.data)) {
-    out.data = root.data.filter(keep);
-  }
-  if (Array.isArray(root.tasks)) {
-    out.tasks = root.tasks.filter(keep);
-  }
-  return out;
 }
 
 function asNullableString(value: unknown): string | null | undefined {
@@ -360,7 +324,7 @@ export function registerTasksTools(server: McpServer) {
   server.tool(
     "kvant_tasks_list",
     "List communications. POST /tasks/index with a FLAT JSON body — do not wrap fields in filters. There is no search parameter: to find a task by name (e.g. акты) call type my (and control/track if needed) and read inputs_values. type selects the list tab: my (performer), control (sender), track (participant) — not type_id. " +
-      "For type=my the MCP post-filters to to_user_id matching the API-key owner when user_id is in the session (new OAuth consents) or when you pass to_user_ids — so meetings where you are only a participant are dropped. Older sessions without user_id keep the raw API my tab until re-consent (auth still works). " +
+      "type=my keeps performer work plus meetings that need going/not-going. Each row gets mcp_role (performer | meeting_invite | unknown). For own tasks/SLA filter mcp_role=performer. Pass to_user_ids to select performers only. " +
       "No combined list: for all communications call three times. Defaults: states=[1,2,3,4,5], offset=0, limit=10. kvant_tasks_get_todo is today's agenda by date, not a name search. " +
       TASK_RESPONSE_GUIDE,
     {
@@ -374,7 +338,7 @@ export function registerTasksTools(server: McpServer) {
         .enum(["my", "control", "track"])
         .optional()
         .describe(
-          'Required list tab at the TOP LEVEL (not under filters). "my" = performer after MCP filter (to_user_id = you) when user_id/to_user_ids known; raw API may also return meetings where you are only a participant. "control" = sender. "track" = participant/monitor. No combined list — call three times. Not for today\'s agenda — use kvant_tasks_get_todo. No search field.'
+          'Required list tab at the TOP LEVEL (not under filters). "my" = performer work plus meetings that need going/not-going (mcp_role). "control" = sender. "track" = participant/monitor without that RSVP. No combined list — call three times. Not for today\'s agenda — use kvant_tasks_get_todo. No search field.'
         ),
       offset: z.number().optional().describe("Pagination offset. Default 0."),
       limit: z.number().optional().describe("Page size. Default 10."),
@@ -398,7 +362,7 @@ export function registerTasksTools(server: McpServer) {
         .nullable()
         .optional()
         .describe(
-          "Filter by recipient/performer user IDs. With type=my, MCP also post-filters to these ids (performer-only) even if the API ignores the filter. Useful with type control or track. null = no filter."
+          "Filter by recipient/performer user IDs. With type=my, a non-empty list keeps those to_user_id values only (performer rows, mcp_role=performer) even if the API ignores the filter. null = current user's my tab: performer work plus going/not-going meeting invites. Useful with type control or track."
         ),
       user_labels: z
         .array(z.union([z.string(), z.number()]))
@@ -475,10 +439,10 @@ export function registerTasksTools(server: McpServer) {
         });
         const enriched = enrichTasksWithUiUrl(data);
         if (type === "my") {
-          const performerIds = resolveMyPerformerFilterIds(to_user_ids);
-          if (performerIds && performerIds.length > 0) {
-            return filterTasksByToUserIds(enriched, performerIds);
-          }
+          return filterMyTaskList(enriched, {
+            toUserIds: to_user_ids,
+            sessionUserId: getActiveOrg().user_id,
+          });
         }
         return enriched;
       });
