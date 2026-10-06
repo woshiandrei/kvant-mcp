@@ -41,7 +41,8 @@ export function registerReportsTools(server: McpServer) {
     "Get the tasks list report (GET /report/tasks_list_report). " +
       "Example: task_filter_type_id=1, program_id=<project id>, organization=<name>. " +
       "task_filter_type_id is required by the Kvant API (422 without it). " +
-      "When program_id is set, the MCP also post-filters the response by program_id so the project filter is reliable even if the API ignores the query param.",
+      "When program_id is set, the MCP also post-filters the response by program_id so the project filter is reliable even if the API ignores the query param. " +
+      "last_done_at in this report is the upstream value. The API can shift it by the completer's timezone versus +03. This tool does not load the work log, so it does not correct that field; kvant_tasks_get does, using the completion log.",
     {
       task_filter_type_id: z
         .number()
