@@ -12,7 +12,7 @@ Preview: set the same two vars if Preview OAuth is used.
 ## Sessions
 
 - Access and refresh tokens are **client-held JWTs** (no server session store). Deploys do not wipe sessions unless `OAUTH_SECRET` changes.
-- Payload `v:1` + `orgs[]` (api keys inside JWT). Optional `orgs[].user_id` is additive; older tokens without it remain valid.
+- Payload `v:1` + `orgs[]` (api keys inside JWT). Optional `orgs[].user_id` is additive; older tokens without it remain valid. `kvant_tasks_list` `type=my` does not depend on it.
 - Legacy refresh JWTs with `kvant_key` (pre–multi-org) are accepted and upgraded to `v:1` session JWTs on refresh.
 
 ## After deploy checklist

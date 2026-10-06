@@ -7,6 +7,7 @@ import {
   type OrgConfig,
   type SessionPayload,
 } from "../../src/session.js";
+import { readOwnerUserIdFromTaskPayload } from "../../src/tools/my-task-filter.js";
 
 interface ConsentFields {
   redirectUri: string;
@@ -222,8 +223,10 @@ async function validateKvantApiKey(apiKey: string): Promise<string | null> {
 }
 
 /**
- * Best-effort: Kvant nests the API-key owner's profile as organization_user on communications.
- * Optional — failure must not block OAuth (existing clients stay valid without user_id).
+ * Best-effort user id for new consents. Optional — failure must not block OAuth.
+ * Index rows usually omit organization_user. When the object is present,
+ * organization_user.id is a membership row; only user_id matches to_user_id.
+ * kvant_tasks_list type=my does not depend on this value.
  */
 async function resolveOwnerUserId(apiKey: string): Promise<number | undefined> {
   try {
@@ -249,32 +252,10 @@ async function resolveOwnerUserId(apiKey: string): Promise<number | undefined> {
     });
     if (!res.ok) return undefined;
     const payload: unknown = await res.json();
-    return extractOrganizationUserId(payload);
+    return readOwnerUserIdFromTaskPayload(payload);
   } catch {
     return undefined;
   }
-}
-
-function extractOrganizationUserId(payload: unknown): number | undefined {
-  const items = listTaskLikeItems(payload);
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const orgUser = (item as Record<string, unknown>).organization_user;
-    if (!orgUser || typeof orgUser !== "object") continue;
-    const id = (orgUser as Record<string, unknown>).id;
-    if (typeof id === "number" && Number.isFinite(id)) return id;
-    if (typeof id === "string" && /^\d+$/.test(id)) return Number(id);
-  }
-  return undefined;
-}
-
-function listTaskLikeItems(payload: unknown): unknown[] {
-  if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== "object") return [];
-  const root = payload as Record<string, unknown>;
-  if (Array.isArray(root.data)) return root.data;
-  if (Array.isArray(root.tasks)) return root.tasks;
-  return [];
 }
 
 function renderConsentPage(
