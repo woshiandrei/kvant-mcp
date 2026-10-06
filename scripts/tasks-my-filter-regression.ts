@@ -3,6 +3,7 @@
  */
 import {
   filterMyTaskList,
+  MCP_MY_ROLE_FIELD,
   readOrganizationUserId,
   readOwnerUserIdFromTaskPayload,
 } from "../src/tools/my-task-filter.js";
@@ -11,16 +12,23 @@ function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
 }
 
-function keysOf(payload: unknown): string[] {
+function itemsOf(payload: unknown): Array<Record<string, unknown>> {
   const items = Array.isArray(payload)
     ? payload
     : payload && typeof payload === "object" && Array.isArray((payload as { data?: unknown }).data)
       ? ((payload as { data: unknown[] }).data)
       : [];
-  return items.map((item) => {
-    const key = item && typeof item === "object" ? (item as { key?: unknown }).key : undefined;
-    return typeof key === "string" ? key : "";
-  });
+  return items.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+}
+
+function keysOf(payload: unknown): string[] {
+  return itemsOf(payload).map((item) => (typeof item.key === "string" ? item.key : ""));
+}
+
+function rolesOf(payload: unknown): string {
+  return itemsOf(payload)
+    .map((item) => `${item.key}:${item[MCP_MY_ROLE_FIELD]}`)
+    .join(",");
 }
 
 function main() {
@@ -48,22 +56,23 @@ function main() {
     },
   ];
 
-  // No session user id: still drop the meeting where the user is only a participant.
+  // Inferred viewer: keep performer work and going/not-going invites, marked.
   const filtered = filterMyTaskList(mixed);
   assert(
-    keysOf(filtered).join(",") === "own-task,own-meeting",
-    `participant meeting leaked: ${keysOf(filtered).join(",")}`
+    rolesOf(filtered) ===
+      "own-task:performer,own-meeting:performer,attended-meeting:meeting_invite",
+    `roles: ${rolesOf(filtered)}`
   );
 
-  // A stored membership id that does not appear as a user id must not disable the filter
-  // and must not wipe the performer's own rows.
+  // A stored membership id that does not appear as a user id must not disable inference.
   const withMembership = filterMyTaskList(mixed, { sessionUserId: 900001 });
   assert(
-    keysOf(withMembership).join(",") === "own-task,own-meeting",
-    `membership id changed the filter: ${keysOf(withMembership).join(",")}`
+    rolesOf(withMembership) ===
+      "own-task:performer,own-meeting:performer,attended-meeting:meeting_invite",
+    `membership id changed the filter: ${rolesOf(withMembership)}`
   );
 
-  // Session user id is trusted when it appears on the page (here, only as a participant).
+  // Session user id on an invite-only page: keep the meeting, mark meeting_invite.
   const sessionParticipant = filterMyTaskList(
     [
       {
@@ -75,9 +84,12 @@ function main() {
     ],
     { sessionUserId: performer }
   );
-  assert(keysOf(sessionParticipant).length === 0, "session user kept a meeting they do not perform");
+  assert(
+    rolesOf(sessionParticipant) === "attended-only:meeting_invite",
+    `invite-only page: ${rolesOf(sessionParticipant)}`
+  );
 
-  // Meetings-only page, viewer unknown: omit meetings (cannot tell performer from participant).
+  // Meetings-only page, viewer unknown: keep rows so RSVP is not dropped; mark unknown.
   const meetingsOnly = filterMyTaskList([
     {
       key: "m1",
@@ -92,9 +104,9 @@ function main() {
       relation_track_users: [{ type: 2, user_id: String(performer) }],
     },
   ]);
-  assert(keysOf(meetingsOnly).length === 0, "meetings-only page was not dropped");
+  assert(rolesOf(meetingsOnly) === "m1:unknown,m2:unknown", `meetings-only: ${rolesOf(meetingsOnly)}`);
 
-  // Same page with a known performer id keeps meetings they perform.
+  // Known viewer: own meeting is performer; invite is meeting_invite.
   const ownMeetings = filterMyTaskList(
     [
       { key: "mine", type_id: 13, to_user_id: performer },
@@ -107,21 +119,24 @@ function main() {
     ],
     { sessionUserId: performer }
   );
-  assert(keysOf(ownMeetings).join(",") === "mine", "known performer lost their meeting");
+  assert(
+    rolesOf(ownMeetings) === "mine:performer,theirs:meeting_invite",
+    `known viewer meetings: ${rolesOf(ownMeetings)}`
+  );
 
-  // Explicit to_user_ids wins, including when it selects someone other than the inferred viewer.
+  // Explicit to_user_ids is performer-only (no invites unless to_user_id matches).
   const explicit = filterMyTaskList(mixed, { toUserIds: [organizer] });
-  assert(keysOf(explicit).join(",") === "attended-meeting", "explicit to_user_ids ignored");
+  assert(rolesOf(explicit) === "attended-meeting:performer", "explicit to_user_ids ignored");
 
-  // Conflicting non-meeting performers: do not guess. Drop meetings, keep the other rows.
+  // Conflicting non-meeting performers: do not guess. Keep all, mark unknown.
   const conflict = filterMyTaskList([
     { key: "a", type_id: 1, to_user_id: performer },
     { key: "b", type_id: 1, to_user_id: organizer },
     { key: "m", type_id: 13, to_user_id: organizer, relation_track_users: [{ type: 2, user_id: performer }] },
   ]);
-  assert(keysOf(conflict).join(",") === "a,b", `ambiguous page: ${keysOf(conflict).join(",")}`);
+  assert(rolesOf(conflict) === "a:unknown,b:unknown,m:unknown", `ambiguous page: ${rolesOf(conflict)}`);
 
-  // Relation row id is not a user id, so it must not select the viewer.
+  // Relation row id is not a user id. Infer viewer from the non-meeting to_user_id.
   const rowId = filterMyTaskList(
     [
       {
@@ -139,18 +154,40 @@ function main() {
     ],
     { sessionUserId: performer }
   );
-  assert(keysOf(rowId).join(",") === "task", `relation row id was treated as a user: ${keysOf(rowId).join(",")}`);
+  assert(
+    rolesOf(rowId) === "task:performer,meeting:meeting_invite",
+    `relation row id: ${rolesOf(rowId)}`
+  );
 
-  const wrapped = filterMyTaskList(
-    { total: 3, data: mixed, tasks: mixed },
-    {}
-  ) as { total: number; data: unknown[]; tasks: unknown[] };
+  const wrapped = filterMyTaskList({ total: 3, data: mixed, tasks: mixed }, {}) as {
+    total: number;
+    data: unknown[];
+    tasks: unknown[];
+  };
   assert(wrapped.total === 3, "meta field changed");
-  assert(keysOf({ data: wrapped.data }).join(",") === "own-task,own-meeting", "data list not filtered");
-  assert(keysOf({ data: wrapped.tasks }).join(",") === "own-task,own-meeting", "tasks list not filtered");
+  assert(
+    rolesOf({ data: wrapped.data }) ===
+      "own-task:performer,own-meeting:performer,attended-meeting:meeting_invite",
+    "data list not filtered"
+  );
+  assert(
+    rolesOf({ data: wrapped.tasks }) ===
+      "own-task:performer,own-meeting:performer,attended-meeting:meeting_invite",
+    "tasks list not filtered"
+  );
 
   assert(filterMyTaskList(null) === null, "null payload changed");
   assert(Array.isArray(filterMyTaskList([])) && (filterMyTaskList([]) as unknown[]).length === 0, "empty list");
+
+  // Someone else's non-meeting is dropped when the viewer is known.
+  const leaked = filterMyTaskList(
+    [
+      { key: "mine", type_id: 1, to_user_id: performer },
+      { key: "theirs", type_id: 1, to_user_id: organizer },
+    ],
+    { sessionUserId: performer }
+  );
+  assert(keysOf(leaked).join(",") === "mine", `leaked other task: ${keysOf(leaked).join(",")}`);
 
   // organization_user.id is the membership row. Only user_id matches to_user_id.
   assert(

@@ -1,17 +1,25 @@
 /**
- * type=my post-filter.
+ * type=my post-filter and role annotation.
  *
- * Upstream POST /tasks/index with type=my is the "my" tab, but it also returns
- * meetings (type_id 13) where the API-key owner is only a calendar participant
- * (relation_track_users type 2). Kvant's own tabs treat those as track.
+ * Upstream POST /tasks/index with type=my is the "my" tab. Non-meeting rows are
+ * performer tasks (to_user_id = you). Meetings (type_id 13) also include invites
+ * where you are only a calendar participant (relation_track_users type 2):
+ * Kvant puts those in my because they require going/not-going — they are not
+ * performer work and they are not the track tab.
  *
- * The list payload does not include organization_user, and organization_user.id
- * (when present on logs) is a membership row, not the user id stored in
- * to_user_id. Session user_id from older consents is therefore often missing
- * or not comparable. This filter does not require it.
+ * Index rows omit organization_user. When that object is present (logs),
+ * organization_user.id is a membership row; user_id matches to_user_id.
+ * Session user_id from older consents is often missing. This filter does not
+ * require it.
  */
 
 const MEETING_TYPE_ID = 13;
+const TRACK_PARTICIPANT_TYPE = 2;
+
+/** MCP-added. Not an upstream field. */
+export const MCP_MY_ROLE_FIELD = "mcp_role";
+
+export type MyListRole = "performer" | "meeting_invite" | "unknown";
 
 export type MyTaskListFilterInput = {
   /** Non-empty to_user_ids from the tool call. Those performers are kept as-is. */
@@ -93,6 +101,13 @@ function trackUserId(row: RecordLike): number | undefined {
   return asId(user.user_id) ?? asId(user.id);
 }
 
+function isMeetingInviteFor(item: unknown, userId: number): boolean {
+  if (taskTypeId(item) !== MEETING_TYPE_ID) return false;
+  return trackRows(item).some(
+    (row) => trackUserId(row) === userId && asId(row.type) === TRACK_PARTICIPANT_TYPE
+  );
+}
+
 function payloadMentionsUser(items: unknown[], userId: number): boolean {
   return items.some((item) => {
     if (taskToUserId(item) === userId) return true;
@@ -104,7 +119,7 @@ function payloadMentionsUser(items: unknown[], userId: number): boolean {
  * Who the API-key owner is, without trusting a membership id.
  * Non-meeting rows in the raw my tab are performer tasks and share one to_user_id.
  * Meetings are not used for this guess: the API mixes performer meetings with
- * participant-only meetings.
+ * going/not-going invites.
  */
 function inferViewerId(items: unknown[]): number | undefined {
   const performerIds = new Set<number>();
@@ -126,29 +141,47 @@ function resolveViewerId(items: unknown[], sessionUserId: number | undefined): n
   return inferViewerId(items);
 }
 
+function withRole(item: unknown, role: MyListRole): unknown {
+  const rec = asRecord(item);
+  if (!rec) return item;
+  return { ...rec, [MCP_MY_ROLE_FIELD]: role };
+}
+
+function roleForViewer(item: unknown, viewer: number): MyListRole | undefined {
+  if (taskToUserId(item) === viewer) return "performer";
+  if (isMeetingInviteFor(item, viewer)) return "meeting_invite";
+  return undefined;
+}
+
 function filterItems(items: unknown[], input: MyTaskListFilterInput): unknown[] {
   const explicit =
     Array.isArray(input.toUserIds) && input.toUserIds.length > 0 ? input.toUserIds : undefined;
   if (explicit) {
     const allowed = new Set(explicit);
-    return items.filter((item) => {
+    return items.flatMap((item) => {
       const id = taskToUserId(item);
-      return id !== undefined && allowed.has(id);
+      if (id === undefined || !allowed.has(id)) return [];
+      return [withRole(item, "performer")];
     });
   }
 
   const viewer = resolveViewerId(items, input.sessionUserId);
-  if (viewer !== undefined) {
-    return items.filter((item) => taskToUserId(item) === viewer);
+  if (viewer === undefined) {
+    // Cannot tell performer from invite. Keep the raw my tab so going/not-going
+    // meetings are not dropped; callers must inspect to_user_id / relation_track_users.
+    return items.map((item) => withRole(item, "unknown"));
   }
 
-  // Ambiguous viewer (meetings-only page, or non-meetings with several performers).
-  // Drop meetings rather than return participant-only rows. Keep other kinds:
-  // upstream my is performer-scoped for those.
-  return items.filter((item) => taskTypeId(item) !== MEETING_TYPE_ID);
+  return items.flatMap((item) => {
+    const role = roleForViewer(item, viewer);
+    return role !== undefined ? [withRole(item, role)] : [];
+  });
 }
 
-/** Keep type=my rows where the current user is the performer (to_user_id). */
+/**
+ * Keep type=my rows the current user owes an action on: performer work, plus
+ * meetings that need going/not-going. Annotate mcp_role.
+ */
 export function filterMyTaskList(payload: unknown, input: MyTaskListFilterInput = {}): unknown {
   if (Array.isArray(payload)) return filterItems(payload, input);
   const root = asRecord(payload);
