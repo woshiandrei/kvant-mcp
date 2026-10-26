@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { forOrganizations, jsonResult, kvantRequest } from "../client.js";
+import { updateProject } from "../program-update.js";
 import { organizationReadShape, organizationWriteShape } from "../session.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+const PROJECT_UPDATE_DESCRIPTION =
+  "Update a project. Reads GET /program/{id}, overlays only keys passed in data, and sends one PUT of the full object. Omitted fields are kept. null clears a field. " +
+  "start and end are the project period. Format: YYYY-MM-DD HH:mm:ss with no T and no timezone, e.g. 2026-10-20 00:00:00. A date with no time means 00:00:00, the same as the date picker. Do not send +03 or +03:00. " +
+  "due_at, bound_program_id, and deadline_start_date are not the project period.";
 
 export function registerProjectsTools(server: McpServer) {
   server.tool(
@@ -49,15 +55,19 @@ export function registerProjectsTools(server: McpServer) {
 
   server.tool(
     "kvant_projects_update",
-    "Update a project",
+    PROJECT_UPDATE_DESCRIPTION,
     {
       program_id: z.number().describe("Project ID"),
-      data: z.record(z.unknown()).describe("Fields to update"),
+      data: z
+        .record(z.unknown())
+        .describe(
+          "Fields to change. Only these keys are overlaid on the current project. Omit a key to keep it. null clears it. start and end: YYYY-MM-DD HH:mm:ss, no T and no timezone; a bare date is 00:00:00."
+        ),
       ...organizationWriteShape,
     },
     async ({ program_id, data, organization }) => {
       const result = await forOrganizations(organization, { allowAll: false }, async () =>
-        kvantRequest({ method: "PUT", path: `/program/${program_id}`, body: data })
+        updateProject(program_id, data)
       );
       return jsonResult(result);
     }
